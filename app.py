@@ -24,11 +24,15 @@ tabs = [
 ]
 selected_tab = st.sidebar.radio("Go to step:", tabs)
 
-# Initialize session state to preserve the dataframe
+# Session state for data
 if "df" not in st.session_state:
     st.session_state.df = None
 if "preprocessed" not in st.session_state:
     st.session_state.preprocessed = False
+
+num_cols = ["MP_Count_per_L", "Risk_Score", "Microplastic_Size_mm_midpoint", "Density_midpoint"]
+cat_cols = ["Location", "Shape", "Polymer_Type", "pH", "Salinity", "Industrial_Activity",
+            "Population_Density", "Risk_Type", "Risk_Level", "Author"]
 
 # -----------------------------
 # 1. Upload & Preview
@@ -78,11 +82,6 @@ elif selected_tab == tabs[1]:
         st.warning("⚠️ Please upload a dataset in Step 1 first.")
         st.stop()
 
-    # Outlier handling, skewness, encoding, scaling
-    num_cols = ["MP_Count_per_L", "Risk_Score", "Microplastic_Size_mm_midpoint", "Density_midpoint"]
-    cat_cols = ["Location", "Shape", "Polymer_Type", "pH", "Salinity", "Industrial_Activity",
-                "Population_Density", "Risk_Type", "Risk_Level", "Author"]
-
     df_prep = df.copy()
     # Outlier handling & skewness
     outlier_report = []
@@ -105,7 +104,6 @@ elif selected_tab == tabs[1]:
                 safe_log = df_prep[col] > -1
                 df_prep.loc[safe_log, col] = np.log1p(df_prep.loc[safe_log, col])
                 outlier_report.append(f"- **{col}**: Log transformation applied (skew={skew:.2f}).")
-            # Show before/after stats in expanded details
     # Encoding
     for col in cat_cols:
         if col in df_prep.columns:
@@ -139,10 +137,18 @@ elif selected_tab == tabs[1]:
         """)
 
     with st.expander("Compare basic statistics before and after preprocessing", expanded=False):
+        num_cols_present = [col for col in num_cols if col in df.columns]
         st.write("Original statistics (first numeric columns):")
-        st.dataframe(df[num_cols].describe().T)
+        if num_cols_present:
+            st.dataframe(df[num_cols_present].describe().T)
+        else:
+            st.warning("No valid numeric columns found for statistics in the uploaded dataset.")
+        num_cols_prep_present = [col for col in num_cols if col in df_prep.columns]
         st.write("After preprocessing:")
-        st.dataframe(df_prep[num_cols].describe().T)
+        if num_cols_prep_present:
+            st.dataframe(df_prep[num_cols_prep_present].describe().T)
+        else:
+            st.warning("No valid numeric columns found for statistics in the preprocessed dataset.")
 
 # -----------------------------
 # 3. Modeling & Performance (includes visualizations below)
