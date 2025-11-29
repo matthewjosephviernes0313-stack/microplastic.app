@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -150,6 +151,78 @@ elif selected_tab == tabs[1]:
             st.dataframe(df_prep[num_cols_prep_present].describe().T)
         else:
             st.warning("No valid numeric columns found for statistics in the preprocessed dataset.")
+
+    # -----------------------------
+    # NEW: Preprocessed Data Results (added section)
+    # -----------------------------
+    with st.expander("Preprocessed Data Results", expanded=True):
+        st.subheader("Quick Results & Diagnostics on Preprocessed Data")
+        try:
+            st.write("Shape of preprocessed data:", df_prep.shape)
+            st.write("Columns in preprocessed data:")
+            st.write(list(df_prep.columns))
+
+            # Missing values
+            missing = df_prep.isnull().sum()
+            missing = missing[missing > 0].sort_values(ascending=False)
+            if not missing.empty:
+                st.markdown("Missing values (per column):")
+                st.dataframe(missing)
+            else:
+                st.markdown("No missing values detected in preprocessed dataset.")
+
+            # Numeric summaries and correlation
+            numeric_cols = df_prep.select_dtypes(include=[np.number]).columns.tolist()
+            if numeric_cols:
+                st.markdown("Numeric features summary (describe):")
+                st.dataframe(df_prep[numeric_cols].describe().T)
+
+                # Correlation heatmap (limit size for performance)
+                corr = df_prep[numeric_cols].corr()
+                fig_corr, ax_corr = plt.subplots(figsize=(8, 6))
+                sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", ax=ax_corr)
+                ax_corr.set_title("Correlation Matrix (numeric features)")
+                st.pyplot(fig_corr)
+                plt.close(fig_corr)
+
+                # Show histograms for up to 6 numeric features
+                n_hist = min(6, len(numeric_cols))
+                if n_hist > 0:
+                    st.markdown(f"Distributions for up to {n_hist} numeric features:")
+                    rows = (n_hist + 1) // 2
+                    fig_hist, axes = plt.subplots(rows, 2, figsize=(12, 4 * rows))
+                    axes = axes.flatten() if n_hist > 1 else [axes]
+                    for i, col in enumerate(numeric_cols[:n_hist]):
+                        sns.histplot(df_prep[col].dropna(), kde=True, ax=axes[i])
+                        axes[i].set_title(col)
+                    for j in range(i + 1, len(axes)):
+                        axes[j].set_visible(False)
+                    st.pyplot(fig_hist)
+                    plt.close(fig_hist)
+            else:
+                st.markdown("No numeric columns available for summary/plots.")
+
+            # Categorical summaries (value counts) - show top values for each categorical column present
+            present_cats = [c for c in cat_cols if c in df_prep.columns]
+            if present_cats:
+                st.markdown("Categorical columns (top value counts):")
+                for c in present_cats:
+                    st.write(f"Column: {c}")
+                    try:
+                        vc = df_prep[c].value_counts().head(10)
+                        st.dataframe(vc)
+                        # small bar plot
+                        fig_bar, ax_bar = plt.subplots(figsize=(6, 3))
+                        vc.plot(kind='bar', ax=ax_bar)
+                        ax_bar.set_title(f"Top values for {c}")
+                        st.pyplot(fig_bar)
+                        plt.close(fig_bar)
+                    except Exception as e:
+                        st.write(f"Could not compute value counts for {c}: {e}")
+            else:
+                st.markdown("No categorical columns found (based on expected categorical list).")
+        except Exception as e:
+            st.error(f"Failed to generate preprocessed data results: {e}")
 
 # -----------------------------
 # 3. Modeling & Performance (updated to give each model its own window/tab)
@@ -409,3 +482,4 @@ elif selected_tab == tabs[3]:
             """)
         else:
             st.warning("Required columns not found or empty.")
+```
