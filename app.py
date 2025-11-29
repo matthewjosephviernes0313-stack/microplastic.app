@@ -9,226 +9,275 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
-st.title("Microplastic Risk Analysis — Full Preprocessing & Modeling App (With Visualization Interpretation)")
+st.set_page_config(page_title="Microplastic Risk Dashboard", page_icon="🧪", layout="wide")
+st.title("🧪 Microplastic Risk Analysis — Interactive Dashboard")
 
 # -----------------------------
-# File Upload Section
+# Sidebar Navigation
 # -----------------------------
-uploaded_file = st.file_uploader("Upload CSV or Excel Dataset", type=["csv", "xlsx"])
+st.sidebar.title("Navigation")
+tabs = [
+    "1. Upload & Preview",
+    "2. Data Preprocessing",
+    "3. Visualizations",
+    "4. Modeling & Performance"
+]
+selected_tab = st.sidebar.radio("Go to step:", tabs)
 
-if uploaded_file:
-    try:
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, encoding='latin1')
-        else:
-            df = pd.read_excel(uploaded_file)
-    except Exception as e:
-        st.error(f"Failed to read file: {e}")
+# Initialize session state to preserve the dataframe after upload/preprocessing
+if "df" not in st.session_state:
+    st.session_state.df = None
+if "preprocessed" not in st.session_state:
+    st.session_state.preprocessed = False
+
+# -----------------------------
+# 1. Upload & Preview
+# -----------------------------
+if selected_tab == tabs[0]:
+    st.header("Step 1: Upload Your Dataset")
+    uploaded_file = st.file_uploader("Upload CSV or Excel Dataset", type=["csv", "xlsx"])
+    if uploaded_file:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file, encoding='latin1')
+            else:
+                df = pd.read_excel(uploaded_file)
+            st.session_state.df = df
+            st.subheader("Dataset Preview")
+            st.dataframe(df.head())
+            st.success("Dataset uploaded! Proceed to Data Preprocessing.")
+        except Exception as e:
+            st.error(f"Failed to read file: {e}")
+            st.stop()
+    elif st.session_state.df is not None:
+        st.subheader("Previously Uploaded Data Preview")
+        st.dataframe(st.session_state.df.head())
+        st.info("You may continue to Data Preprocessing.")
+
+# -----------------------------
+# 2. Data Preprocessing
+# -----------------------------
+elif selected_tab == tabs[1]:
+    st.header("Step 2: Preprocess Data")
+    df = st.session_state.df
+    if df is None:
+        st.warning("Please upload data in Step 1 first.")
         st.stop()
 
-    st.subheader("Dataset Preview")
-    st.dataframe(df.head())
-
     # -----------------------------
-    # Outlier Handling (Robust)
+    # Outlier Handling, Skewness, Encoding, Scaling
     # -----------------------------
     num_cols = ["MP_Count_per_L", "Risk_Score", "Microplastic_Size_mm_midpoint", "Density_midpoint"]
+    cat_cols = ["Location", "Shape", "Polymer_Type", "pH", "Salinity", "Industrial_Activity",
+                "Population_Density", "Risk_Type", "Risk_Level", "Author"]
+
+    df_prep = df.copy()
     for col in num_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-            if df[col].notna().sum() > 0:
-                Q1 = df[col].quantile(0.25)
-                Q3 = df[col].quantile(0.75)
+        if col in df_prep.columns:
+            df_prep[col] = pd.to_numeric(df_prep[col], errors='coerce')
+            if df_prep[col].notna().sum() > 0:
+                Q1 = df_prep[col].quantile(0.25)
+                Q3 = df_prep[col].quantile(0.75)
                 IQR = Q3 - Q1
                 lower = Q1 - 1.5 * IQR
                 upper = Q3 + 1.5 * IQR
-                df[col] = np.clip(df[col], lower, upper)
-
-    # -----------------------------
-    # Skewness Transformation
-    # -----------------------------
-    for col in num_cols:
-        if col in df.columns and df[col].notna().sum() > 0:
-            skew = df[col].skew()
-            if skew > 1:
-                safe_log = df[col] > -1
-                df.loc[safe_log, col] = np.log1p(df.loc[safe_log, col])
-
-    # -----------------------------
-    # Encoding Categorical Variables
-    # -----------------------------
-    cat_cols = ["Location", "Shape", "Polymer_Type", "pH", "Salinity", "Industrial_Activity", 
-                "Population_Density", "Risk_Type", "Risk_Level", "Author"]
-
+                df_prep[col] = np.clip(df_prep[col], lower, upper)
+            skew = df_prep[col].skew()
+            if df_prep[col].notna().sum() > 0 and skew > 1:
+                safe_log = df_prep[col] > -1
+                df_prep.loc[safe_log, col] = np.log1p(df_prep.loc[safe_log, col])
     for col in cat_cols:
-        if col in df.columns:
-            df[col] = LabelEncoder().fit_transform(df[col].astype(str))
-
-    # -----------------------------
-    # Feature Scaling
-    # -----------------------------
+        if col in df_prep.columns:
+            df_prep[col] = LabelEncoder().fit_transform(df_prep[col].astype(str))
     scaler = StandardScaler()
     for col in num_cols:
-        if col in df.columns and df[col].notna().sum() > 0:
-            df[col] = scaler.fit_transform(df[[col]])
+        if col in df_prep.columns and df_prep[col].notna().sum() > 0:
+            df_prep[col] = scaler.fit_transform(df_prep[[col]])
 
-    st.subheader("Preprocessed Dataset")
-    st.dataframe(df.head())
+    st.subheader("Preprocessed Dataset Preview")
+    st.dataframe(df_prep.head())
+    st.info("Outlier handling, skewness transformation, categorical encoding, and scaling applied.")
 
-    # -----------------------------
-    # Risk Score Distribution
-    # -----------------------------
-    st.subheader("Risk Score Distribution")
-    if 'Risk_Score' in df.columns and df['Risk_Score'].notna().sum() > 0:
-        fig, ax = plt.subplots()
-        sns.histplot(df['Risk_Score'].dropna(), kde=True, ax=ax)
-        st.pyplot(fig)
-        st.info("""
-        **Interpretation:**  
-        The histogram shows the distribution of overall risk scores assigned to the water samples. 
-        Peaks in this graph indicate the most common risk levels present in the dataset after preprocessing. 
-        A right-skewed plot would suggest many samples have low risk, while a more uniform or left-skewed shape would suggest higher risk is more prevalent.
-        """)
+    st.session_state.df = df_prep
+    st.session_state.preprocessed = True
+    st.success("Data preprocessed! Now explore visualizations or run models.")
 
-    # -----------------------------
-    # Risk Score vs MP Count
-    # -----------------------------
-    if (
-        'Risk_Score' in df.columns
-        and 'MP_Count_per_L' in df.columns
-        and df['Risk_Score'].notna().sum() > 0
-        and df['MP_Count_per_L'].notna().sum() > 0
-    ):
-        st.subheader("Risk Score vs MP_Count_per_L")
-        fig, ax = plt.subplots()
-        ax.scatter(df['Risk_Score'], df['MP_Count_per_L'])
-        ax.set_xlabel("Risk Score")
-        ax.set_ylabel("MP Count per L")
-        st.pyplot(fig)
-        st.info("""
-        **Interpretation:**  
-        This scatter plot relates the microplastic count per liter to the assigned risk score. 
-        A positive correlation suggests that areas with higher microplastic concentrations tend to have higher calculated risk scores. 
-        Outliers may represent samples where risk assessment doesn't strictly follow microplastic levels, possibly due to other environmental factors.
-        """)
+# -----------------------------
+# 3. Visualizations
+# -----------------------------
+elif selected_tab == tabs[2]:
+    st.header("Step 3: Visualizations & Data Interpretations")
+    df = st.session_state.df
+    if df is None or st.session_state.preprocessed is False:
+        st.warning("Please preprocess the data first.")
+        st.stop()
 
-    # -----------------------------
-    # Risk Score by Risk Level
-    # -----------------------------
-    if (
-        'Risk_Level' in df.columns
-        and 'Risk_Score' in df.columns
-        and df['Risk_Score'].notna().sum() > 0
-    ):
+    vis_options = [
+        "Risk Score Distribution",
+        "Risk Score vs MP_Count_per_L",
+        "Risk Score by Risk Level"
+    ]
+    selected_vis = st.sidebar.selectbox("Choose a visualization:", vis_options)
+
+    if selected_vis == vis_options[0]:
+        st.subheader("Risk Score Distribution")
+        if 'Risk_Score' in df.columns and df['Risk_Score'].notna().sum() > 0:
+            fig, ax = plt.subplots()
+            sns.histplot(df['Risk_Score'].dropna(), kde=True, ax=ax)
+            st.pyplot(fig)
+            st.info("""
+            **Interpretation:**  
+            The histogram shows the distribution of overall risk scores assigned to the water samples. 
+            Peaks in this graph indicate the most common risk levels present in the dataset after preprocessing. 
+            A right-skewed plot would suggest many samples have low risk, while a more uniform or left-skewed shape would suggest higher risk is more prevalent.
+            """)
+        else:
+            st.warning("Risk_Score column not found or empty.")
+
+    elif selected_vis == vis_options[1]:
+        st.subheader("Risk Score vs MP Count per Liter")
+        if (
+            'Risk_Score' in df.columns
+            and 'MP_Count_per_L' in df.columns
+            and df['Risk_Score'].notna().sum() > 0
+            and df['MP_Count_per_L'].notna().sum() > 0
+        ):
+            fig, ax = plt.subplots()
+            ax.scatter(df['Risk_Score'], df['MP_Count_per_L'])
+            ax.set_xlabel("Risk Score")
+            ax.set_ylabel("MP Count per L")
+            st.pyplot(fig)
+            st.info("""
+            **Interpretation:**  
+            This scatter plot relates microplastic count per liter to the assigned risk score.
+            A positive correlation suggests that areas with higher microplastic concentrations tend to have higher calculated risk scores.
+            Outliers may represent samples where risk assessment doesn't strictly follow microplastic levels, possibly due to other environmental factors.
+            """)
+        else:
+            st.warning("Required columns not found or empty.")
+
+    elif selected_vis == vis_options[2]:
         st.subheader("Risk Score by Risk Level")
-        fig, ax = plt.subplots()
-        sns.boxplot(x=df['Risk_Level'], y=df['Risk_Score'], ax=ax)
-        st.pyplot(fig)
-        st.info("""
-        **Interpretation:**  
-        This boxplot visualizes how risk scores vary across different categorical risk levels (e.g., Low, Medium, High).
-        It showcases the central tendency (median) and spread (IQR) for each risk group. 
-        If there is good separation between levels, it means the risk scoring system discriminates well between categories.
-        Overlaps or outliers may suggest inconsistencies or areas needing further analysis.
-        """)
+        if (
+            'Risk_Level' in df.columns
+            and 'Risk_Score' in df.columns
+            and df['Risk_Score'].notna().sum() > 0
+        ):
+            fig, ax = plt.subplots()
+            sns.boxplot(x=df['Risk_Level'], y=df['Risk_Score'], ax=ax)
+            st.pyplot(fig)
+            st.info("""
+            **Interpretation:**  
+            This boxplot visualizes how risk scores vary across different categorical risk levels.
+            It showcases the central tendency (median) and spread for each risk group.
+            If there is good separation between levels, it means the risk scoring system discriminates well between categories.
+            Overlaps or outliers may suggest inconsistencies or areas needing further analysis.
+            """)
+        else:
+            st.warning("Required columns not found or empty.")
 
-    # -----------------------------
-    # Modeling (Full Fix)
-    # -----------------------------
-    if "Risk_Type" in df.columns and "Risk_Level" in df.columns:
-        X = df.drop(columns=["Risk_Type", "Risk_Level"])
-        y_type = df['Risk_Type']
-        y_level = df['Risk_Level']
-        X = X.select_dtypes(include=[np.number])
-        X = X.replace([np.inf, -np.inf], np.nan)
-        X = X.fillna(0)
-        y_type = y_type.fillna(0)
-        y_level = y_level.fillna(0)
+# -----------------------------
+# 4. Modeling & Performance
+# -----------------------------
+elif selected_tab == tabs[3]:
+    st.header("Step 4: Modeling & Performance")
+    df = st.session_state.df
+    if df is None or st.session_state.preprocessed is False:
+        st.warning("Please preprocess the data first.")
+        st.stop()
+    if "Risk_Type" not in df.columns or "Risk_Level" not in df.columns:
+        st.warning("Required columns for modeling not found in data.")
+        st.stop()
 
-        st.write("Model features (X) types:")
-        st.write(X.dtypes)
-        st.write("Preview features (X):")
-        st.write(X.head())
+    X = df.drop(columns=["Risk_Type", "Risk_Level"], errors="ignore")
+    y_type = df['Risk_Type']
+    y_level = df['Risk_Level']
+    X = X.select_dtypes(include=[np.number])
+    X = X.replace([np.inf, -np.inf], np.nan)
+    X = X.fillna(0)
+    y_type = y_type.fillna(0)
+    y_level = y_level.fillna(0)
 
-        X_train, X_test, y_train_type, y_test_type = train_test_split(X, y_type, test_size=0.2, random_state=42)
-        _, _, y_train_level, y_test_level = train_test_split(X, y_level, test_size=0.2, random_state=42)
+    model_names = ["Logistic Regression", "Random Forest", "Gradient Boosting"]
+    model_objs = {
+        "Logistic Regression": LogisticRegression(max_iter=2000),
+        "Random Forest": RandomForestClassifier(),
+        "Gradient Boosting": GradientBoostingClassifier()
+    }
 
-        models = {
-            "Logistic Regression": LogisticRegression(max_iter=2000),
-            "Random Forest": RandomForestClassifier(),
-            "Gradient Boosting": GradientBoostingClassifier()
-        }
+    st.sidebar.subheader("Model Selection")
+    selected_model = st.sidebar.selectbox("Choose a model to evaluate:", model_names)
 
-        st.subheader("Model Evaluation — Risk_Type & Risk_Level")
-        results_type = {}
-        results_level = {}
+    st.subheader(f"Performance for {selected_model}")
 
-        for name, model in models.items():
-            model.fit(X_train, y_train_type)
-            preds_type = model.predict(X_test)
-            results_type[name] = [
-                accuracy_score(y_test_type, preds_type),
-                precision_score(y_test_type, preds_type, average='weighted', zero_division=0),
-                recall_score(y_test_type, preds_type, average='weighted', zero_division=0),
-                f1_score(y_test_type, preds_type, average='weighted', zero_division=0)
-            ]
+    X_train, X_test, y_train_type, y_test_type = train_test_split(X, y_type, test_size=0.2, random_state=42)
+    _, _, y_train_level, y_test_level = train_test_split(X, y_level, test_size=0.2, random_state=42)
+    model = model_objs[selected_model]
 
-            model.fit(X_train, y_train_level)
-            preds_level = model.predict(X_test)
-            results_level[name] = [
-                accuracy_score(y_test_level, preds_level),
-                precision_score(y_test_level, preds_level, average='weighted', zero_division=0),
-                recall_score(y_test_level, preds_level, average='weighted', zero_division=0),
-                f1_score(y_test_level, preds_level, average='weighted', zero_division=0)
-            ]
+    # Risk Type
+    model.fit(X_train, y_train_type)
+    preds_type = model.predict(X_test)
+    perf_type = {
+        "Accuracy": accuracy_score(y_test_type, preds_type),
+        "Precision": precision_score(y_test_type, preds_type, average='weighted', zero_division=0),
+        "Recall": recall_score(y_test_type, preds_type, average='weighted', zero_division=0),
+        "F1-Score": f1_score(y_test_type, preds_type, average='weighted', zero_division=0)
+    }
+    st.write("Risk Type Classification Metrics")
+    st.dataframe(pd.DataFrame(perf_type, index=[selected_model]).T)
+    st.info("""
+    **Interpretation:**  
+    These metrics indicate how well the selected model predicts Risk_Type categories.
+    Precision and recall are especially important for imbalanced classes.
+    """)
 
-        st.write("Risk_Type Performance:")
-        st.dataframe(pd.DataFrame(results_type, index=["Accuracy","Precision","Recall","F1-Score"]))
-        st.info("""
-        **Interpretation:**  
-        The above table shows model performance metrics for predicting the Risk_Type classification.
-        Higher accuracy, precision, recall, and F1-score indicate better model ability to correctly classify types of risk.
-        Compare metrics across models to identify which algorithm fits your data best.
-        """)
+    # Risk Level
+    model.fit(X_train, y_train_level)
+    preds_level = model.predict(X_test)
+    perf_level = {
+        "Accuracy": accuracy_score(y_test_level, preds_level),
+        "Precision": precision_score(y_test_level, preds_level, average='weighted', zero_division=0),
+        "Recall": recall_score(y_test_level, preds_level, average='weighted', zero_division=0),
+        "F1-Score": f1_score(y_test_level, preds_level, average='weighted', zero_division=0)
+    }
+    st.write("Risk Level Classification Metrics")
+    st.dataframe(pd.DataFrame(perf_level, index=[selected_model]).T)
+    st.info("""
+    **Interpretation:**  
+    These scores reflect the ability of your model to classify Risk Level groups.
+    High F1-score signals balanced accuracy and precision.
+    """)
 
-        st.write("Risk_Level Performance:")
-        st.dataframe(pd.DataFrame(results_level, index=["Accuracy","Precision","Recall","F1-Score"]))
-        st.info("""
-        **Interpretation:**  
-        This table summarizes how well each machine learning model predicts Risk_Level categories.
-        Review which model performs best for your data. Pay special attention to F1-score if your dataset is imbalanced across classes.
-        """)
+    # K-Fold Cross Validation
+    st.subheader("K-Fold Cross Validation Accuracy (Risk Type)")
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    cv_scores = cross_val_score(model, X, y_type, cv=kf, scoring='accuracy')
+    st.bar_chart(cv_scores)
+    st.info("""
+    **Interpretation:**  
+    The bar chart displays cross-validation fold accuracies.
+    Consistent scores across folds mean your model generalizes reliably.
+    Large differences may indicate sensitivity to dataset splits.
+    """)
 
-        # -----------------------------
-        # K-Fold Validation
-        # -----------------------------
-        st.subheader("K-Fold Cross Validation")
-        kf = KFold(n_splits=5, shuffle=True, random_state=42)
-        cv_scores = {}
-
-        for name, model in models.items():
-            scores = cross_val_score(model, X, y_type, cv=kf, scoring='accuracy')
-            cv_scores[name] = scores
-
-        st.write("Cross Validation Accuracy (Risk_Type):")
-        st.dataframe(pd.DataFrame(cv_scores))
-        st.info("""
-        **Interpretation:**  
-        The above shows the accuracy results of cross-validation for Risk_Type using each model.
-        Consistently high performance across folds suggests the model generalizes well and is not overfitting.
-        Wide fold-to-fold swings mean the model may be sensitive to sampling or dataset composition.
-        """)
-
-        # -----------------------------
-        # Model Performance Visualization
-        # -----------------------------
-        st.subheader("Model Performance Visualization")
-        perf_df = pd.DataFrame(results_type, index=["Accuracy","Precision","Recall","F1-Score"])
-        fig, ax = plt.subplots()
-        perf_df.plot(kind='bar', ax=ax)
-        st.pyplot(fig)
-        st.info("""
-        **Interpretation:**  
-        This bar chart compares the performance of each model for Risk_Type across accuracy, precision, recall, and F1-score. 
-        Visually, it helps you quickly spot which algorithms excel in each metric and choose the most appropriate classifier for your needs.
-        """)
+    # Model Metric Comparison (All Models)
+    st.subheader("Model Metric Comparison (Risk Type)")
+    metrics_dict = {}
+    for name, mod in model_objs.items():
+        mod.fit(X_train, y_train_type)
+        pred = mod.predict(X_test)
+        metrics_dict[name] = [
+            accuracy_score(y_test_type, pred),
+            precision_score(y_test_type, pred, average='weighted', zero_division=0),
+            recall_score(y_test_type, pred, average='weighted', zero_division=0),
+            f1_score(y_test_type, pred, average='weighted', zero_division=0)
+        ]
+    perf_df = pd.DataFrame(metrics_dict, index=["Accuracy","Precision","Recall","F1-Score"])
+    fig, ax = plt.subplots()
+    perf_df.plot(kind='bar', ax=ax)
+    st.pyplot(fig)
+    st.info("""
+    **Interpretation:**  
+    This bar chart visually compares model performance across key metrics for Risk Type classification. 
+    Use it to select the best performing model for further analysis or deployment.
+    """)
