@@ -14,14 +14,15 @@ st.set_page_config(page_title="Microplastic Risk Dashboard", page_icon="🧪", l
 st.title("🧪 Microplastic Risk Analysis — Enhanced Interactive Dashboard")
 
 # -----------------------------
-# Sidebar Navigation
+# Sidebar Navigation (now includes a dedicated Preprocessed Results page)
 # -----------------------------
 st.sidebar.title("Navigation")
 tabs = [
     "1. Upload & Preview",
     "2. Data Preprocessing",
-    "3. Modeling & Performance",
-    "4. Visualizations"
+    "3. Preprocessed Results",
+    "4. Modeling & Performance",
+    "5. Visualizations"
 ]
 selected_tab = st.sidebar.radio("Go to step:", tabs)
 
@@ -31,6 +32,7 @@ if "df" not in st.session_state:
 if "preprocessed" not in st.session_state:
     st.session_state.preprocessed = False
 
+# Columns expected (used throughout)
 num_cols = ["MP_Count_per_L", "Risk_Score", "Microplastic_Size_mm_midpoint", "Density_midpoint"]
 cat_cols = ["Location", "Shape", "Polymer_Type", "pH", "Salinity", "Industrial_Activity",
             "Population_Density", "Risk_Type", "Risk_Level", "Author"]
@@ -44,34 +46,33 @@ if selected_tab == tabs[0]:
     if uploaded_file:
         try:
             if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file, encoding='latin1')
+                raw_df = pd.read_csv(uploaded_file, encoding='latin1')
             else:
-                df = pd.read_excel(uploaded_file)
-            st.session_state.df = df
+                raw_df = pd.read_excel(uploaded_file)
+            # keep raw copy in session in case it's useful later
+            st.session_state.raw_df = raw_df.copy()
+            st.session_state.df = raw_df.copy()
+            st.session_state.preprocessed = False
             st.success("✅ Dataset uploaded successfully! Preview below:")
             st.subheader("Dataset Preview (First 10 Rows)")
-            st.dataframe(df.head(10), use_container_width=True)
-            st.markdown("""
-            <details>
-            <summary style='font-weight:bold'>Show full uploaded dataset</summary>
-            """, unsafe_allow_html=True)
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(raw_df.head(10), use_container_width=True)
+            st.markdown("<details><summary style='font-weight:bold'>Show full uploaded dataset</summary>", unsafe_allow_html=True)
+            st.dataframe(raw_df, use_container_width=True)
             st.markdown("</details>", unsafe_allow_html=True)
             st.info("Proceed to Data Preprocessing for cleaning and transformation.")
         except Exception as e:
             st.error(f"Failed to read file: {e}")
             st.stop()
-    elif st.session_state.df is not None:
+    elif "raw_df" in st.session_state and st.session_state.raw_df is not None:
         st.success("Dataset previously uploaded.")
         st.subheader("Dataset Preview (First 10 Rows)")
-        st.dataframe(st.session_state.df.head(10), use_container_width=True)
-        st.markdown("""
-        <details>
-        <summary style='font-weight:bold'>Show full uploaded dataset</summary>
-        """, unsafe_allow_html=True)
-        st.dataframe(st.session_state.df, use_container_width=True)
+        st.dataframe(st.session_state.raw_df.head(10), use_container_width=True)
+        st.markdown("<details><summary style='font-weight:bold'>Show full uploaded dataset</summary>", unsafe_allow_html=True)
+        st.dataframe(st.session_state.raw_df, use_container_width=True)
         st.markdown("</details>", unsafe_allow_html=True)
         st.info("You may continue to Data Preprocessing.")
+    else:
+        st.info("No dataset uploaded yet. Use the uploader above.")
 
 # -----------------------------
 # 2. Data Preprocessing
@@ -84,11 +85,11 @@ elif selected_tab == tabs[1]:
         st.stop()
 
     df_prep = df.copy()
-    # Outlier handling & skewness
     outlier_report = []
+
+    # Numeric conversions, outlier clipping and optional log transform for skew
     for col in num_cols:
         if col in df_prep.columns:
-            orig_stats = df_prep[col].describe()
             df_prep[col] = pd.to_numeric(df_prep[col], errors='coerce')
             nan_count = df_prep[col].isna().sum()
             if df_prep[col].notna().sum() > 0:
@@ -105,26 +106,30 @@ elif selected_tab == tabs[1]:
                 safe_log = df_prep[col] > -1
                 df_prep.loc[safe_log, col] = np.log1p(df_prep.loc[safe_log, col])
                 outlier_report.append(f"- **{col}**: Log transformation applied (skew={skew:.2f}).")
-    # Encoding
+
+    # Label encode categorical columns if present
     for col in cat_cols:
         if col in df_prep.columns:
-            df_prep[col] = LabelEncoder().fit_transform(df_prep[col].astype(str))
-    # Scaling
+            try:
+                df_prep[col] = LabelEncoder().fit_transform(df_prep[col].astype(str))
+            except Exception:
+                # fallback: leave as-is if encoding fails
+                pass
+
+    # Scaling numeric columns
     scaler = StandardScaler()
     for col in num_cols:
         if col in df_prep.columns and df_prep[col].notna().sum() > 0:
             df_prep[col] = scaler.fit_transform(df_prep[[col]])
 
+    # Save preprocessed into session
     st.session_state.df = df_prep
     st.session_state.preprocessed = True
 
     st.success("✅ Data preprocessing complete!")
     st.subheader("Preprocessed Dataset (First 10 Rows)")
     st.dataframe(df_prep.head(10), use_container_width=True)
-    st.markdown("""
-    <details>
-    <summary style='font-weight:bold'>Show full preprocessed dataset</summary>
-    """, unsafe_allow_html=True)
+    st.markdown("<details><summary style='font-weight:bold'>Show full preprocessed dataset</summary>", unsafe_allow_html=True)
     st.dataframe(df_prep, use_container_width=True)
     st.markdown("</details>", unsafe_allow_html=True)
 
@@ -133,17 +138,21 @@ elif selected_tab == tabs[1]:
         for report in outlier_report:
             st.markdown(report)
         st.markdown("""
-        - **Categorical Encoding:** All categorical columns transformed with LabelEncoder.
+        - **Categorical Encoding:** All categorical columns transformed with LabelEncoder (where possible).
         - **Scaling:** All numerical columns standardized using StandardScaler.
         """)
 
     with st.expander("Compare basic statistics before and after preprocessing", expanded=False):
-        num_cols_present = [col for col in num_cols if col in df.columns]
-        st.write("Original statistics (first numeric columns):")
-        if num_cols_present:
-            st.dataframe(df[num_cols_present].describe().T)
+        if "raw_df" in st.session_state and st.session_state.raw_df is not None:
+            raw = st.session_state.raw_df
+            num_cols_present = [col for col in num_cols if col in raw.columns]
+            st.write("Original statistics (selected numeric columns):")
+            if num_cols_present:
+                st.dataframe(raw[num_cols_present].describe().T)
+            else:
+                st.warning("No valid numeric columns found for statistics in the uploaded dataset.")
         else:
-            st.warning("No valid numeric columns found for statistics in the uploaded dataset.")
+            st.info("Original raw dataset not available for comparison.")
         num_cols_prep_present = [col for col in num_cols if col in df_prep.columns]
         st.write("After preprocessing:")
         if num_cols_prep_present:
@@ -151,83 +160,98 @@ elif selected_tab == tabs[1]:
         else:
             st.warning("No valid numeric columns found for statistics in the preprocessed dataset.")
 
-    # -----------------------------
-    # NEW: Preprocessed Data Results (added section)
-    # -----------------------------
-    with st.expander("Preprocessed Data Results", expanded=True):
-        st.subheader("Quick Results & Diagnostics on Preprocessed Data")
-        try:
-            st.write("Shape of preprocessed data:", df_prep.shape)
-            st.write("Columns in preprocessed data:")
-            st.write(list(df_prep.columns))
-
-            # Missing values
-            missing = df_prep.isnull().sum()
-            missing = missing[missing > 0].sort_values(ascending=False)
-            if not missing.empty:
-                st.markdown("Missing values (per column):")
-                st.dataframe(missing)
-            else:
-                st.markdown("No missing values detected in preprocessed dataset.")
-
-            # Numeric summaries and correlation
-            numeric_cols = df_prep.select_dtypes(include=[np.number]).columns.tolist()
-            if numeric_cols:
-                st.markdown("Numeric features summary (describe):")
-                st.dataframe(df_prep[numeric_cols].describe().T)
-
-                # Correlation heatmap (limit size for performance)
-                corr = df_prep[numeric_cols].corr()
-                fig_corr, ax_corr = plt.subplots(figsize=(8, 6))
-                sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", ax=ax_corr)
-                ax_corr.set_title("Correlation Matrix (numeric features)")
-                st.pyplot(fig_corr)
-                plt.close(fig_corr)
-
-                # Show histograms for up to 6 numeric features
-                n_hist = min(6, len(numeric_cols))
-                if n_hist > 0:
-                    st.markdown(f"Distributions for up to {n_hist} numeric features:")
-                    rows = (n_hist + 1) // 2
-                    fig_hist, axes = plt.subplots(rows, 2, figsize=(12, 4 * rows))
-                    axes = axes.flatten() if n_hist > 1 else [axes]
-                    for i, col in enumerate(numeric_cols[:n_hist]):
-                        sns.histplot(df_prep[col].dropna(), kde=True, ax=axes[i])
-                        axes[i].set_title(col)
-                    for j in range(i + 1, len(axes)):
-                        axes[j].set_visible(False)
-                    st.pyplot(fig_hist)
-                    plt.close(fig_hist)
-            else:
-                st.markdown("No numeric columns available for summary/plots.")
-
-            # Categorical summaries (value counts) - show top values for each categorical column present
-            present_cats = [c for c in cat_cols if c in df_prep.columns]
-            if present_cats:
-                st.markdown("Categorical columns (top value counts):")
-                for c in present_cats:
-                    st.write(f"Column: {c}")
-                    try:
-                        vc = df_prep[c].value_counts().head(10)
-                        st.dataframe(vc)
-                        # small bar plot
-                        fig_bar, ax_bar = plt.subplots(figsize=(6, 3))
-                        vc.plot(kind='bar', ax=ax_bar)
-                        ax_bar.set_title(f"Top values for {c}")
-                        st.pyplot(fig_bar)
-                        plt.close(fig_bar)
-                    except Exception as e:
-                        st.write(f"Could not compute value counts for {c}: {e}")
-            else:
-                st.markdown("No categorical columns found (based on expected categorical list).")
-        except Exception as e:
-            st.error(f"Failed to generate preprocessed data results: {e}")
+    st.info("You can view more diagnostics and charts on the '3. Preprocessed Results' tab in the sidebar.")
 
 # -----------------------------
-# 3. Modeling & Performance (updated to give each model its own window/tab)
+# 3. Preprocessed Results (NEW separate navigation)
 # -----------------------------
 elif selected_tab == tabs[2]:
-    st.header("Step 3: Modeling & Performance")
+    st.header("Preprocessed Data Results")
+    if st.session_state.df is None or st.session_state.preprocessed is False:
+        st.warning("⚠️ No preprocessed data available. Please run Data Preprocessing first.")
+        st.stop()
+
+    df_prep = st.session_state.df
+
+    st.subheader("Quick Diagnostics & Summaries")
+    try:
+        st.write("Shape:", df_prep.shape)
+        st.write("Columns:", list(df_prep.columns))
+
+        # Missing values summary
+        missing = df_prep.isnull().sum()
+        missing = missing[missing > 0].sort_values(ascending=False)
+        if not missing.empty:
+            st.markdown("Missing values (per column):")
+            st.dataframe(missing)
+        else:
+            st.markdown("No missing values detected in preprocessed dataset.")
+
+        # Numeric summaries and correlation heatmap
+        numeric_cols = df_prep.select_dtypes(include=[np.number]).columns.tolist()
+        if numeric_cols:
+            st.markdown("Numeric features summary (describe):")
+            st.dataframe(df_prep[numeric_cols].describe().T)
+
+            # Correlation heatmap
+            corr = df_prep[numeric_cols].corr()
+            fig_corr, ax_corr = plt.subplots(figsize=(8, 6))
+            sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", ax=ax_corr)
+            ax_corr.set_title("Correlation Matrix (numeric features)")
+            st.pyplot(fig_corr)
+            plt.close(fig_corr)
+
+            # Histograms for up to 6 numeric features
+            n_hist = min(6, len(numeric_cols))
+            if n_hist > 0:
+                st.markdown(f"Distributions for up to {n_hist} numeric features:")
+                rows = (n_hist + 1) // 2
+                fig_hist, axes = plt.subplots(rows, 2, figsize=(12, 4 * rows))
+                axes = axes.flatten() if n_hist > 1 else [axes]
+                for i, col in enumerate(numeric_cols[:n_hist]):
+                    sns.histplot(df_prep[col].dropna(), kde=True, ax=axes[i])
+                    axes[i].set_title(col)
+                for j in range(i + 1, len(axes)):
+                    axes[j].set_visible(False)
+                st.pyplot(fig_hist)
+                plt.close(fig_hist)
+        else:
+            st.markdown("No numeric columns available for summaries/plots.")
+
+        # Categorical summaries (top value counts)
+        present_cats = [c for c in cat_cols if c in df_prep.columns]
+        if present_cats:
+            st.markdown("Categorical columns (top value counts):")
+            for c in present_cats:
+                st.write(f"Column: {c}")
+                try:
+                    vc = df_prep[c].value_counts().head(10)
+                    st.dataframe(vc)
+                    fig_bar, ax_bar = plt.subplots(figsize=(6, 3))
+                    vc.plot(kind='bar', ax=ax_bar)
+                    ax_bar.set_title(f"Top values for {c}")
+                    st.pyplot(fig_bar)
+                    plt.close(fig_bar)
+                except Exception as e:
+                    st.write(f"Could not compute value counts for {c}: {e}")
+        else:
+            st.markdown("No categorical columns found (based on expected categorical list).")
+    except Exception as e:
+        st.error(f"Failed to generate preprocessed data results: {e}")
+
+    # Provide an option to download the preprocessed data
+    try:
+        csv = df_prep.to_csv(index=False).encode('utf-8')
+        st.download_button("Download preprocessed data (CSV)", data=csv, file_name="preprocessed_data.csv", mime="text/csv")
+    except Exception:
+        # ignore if download button not supported in environment
+        pass
+
+# -----------------------------
+# 4. Modeling & Performance (now shifted to index 4)
+# -----------------------------
+elif selected_tab == tabs[3]:
+    st.header("Step 4: Modeling & Performance")
     df = st.session_state.df
     if df is None or st.session_state.preprocessed is False:
         st.warning("⚠️ Please preprocess the data first.")
@@ -340,79 +364,11 @@ elif selected_tab == tabs[2]:
     st.pyplot(fig)
     st.info("This bar chart visually compares model performance across key metrics for Risk Type classification.")
 
-    # -----------------------------
-    # Visualizations BELOW modeling
-    # -----------------------------
-    st.header("Step 4: Visualizations & Data Interpretations")
-    vis_options = [
-        "Risk Score Distribution",
-        "Risk Score vs MP_Count_per_L",
-        "Risk Score by Risk Level"
-    ]
-    selected_vis = st.sidebar.selectbox("Choose a visualization:", vis_options, index=0)
-
-    if selected_vis == vis_options[0]:
-        st.subheader("Risk Score Distribution")
-        if 'Risk_Score' in df.columns and df['Risk_Score'].notna().sum() > 0:
-            fig, ax = plt.subplots()
-            sns.histplot(df['Risk_Score'].dropna(), kde=True, ax=ax)
-            st.pyplot(fig)
-            st.info("""
-            **Interpretation:**  
-            The histogram shows the distribution of overall risk scores assigned to the water samples. 
-            Peaks in this graph indicate the most common risk levels present in the dataset after preprocessing. 
-            A right-skewed plot would suggest many samples have low risk, while a more uniform or left-skewed shape would suggest higher risk is more prevalent.
-            """)
-        else:
-            st.warning("Risk_Score column not found or empty.")
-
-    elif selected_vis == vis_options[1]:
-        st.subheader("Risk Score vs MP Count per Liter")
-        if (
-            'Risk_Score' in df.columns
-            and 'MP_Count_per_L' in df.columns
-            and df['Risk_Score'].notna().sum() > 0
-            and df['MP_Count_per_L'].notna().sum() > 0
-        ):
-            fig, ax = plt.subplots()
-            ax.scatter(df['Risk_Score'], df['MP_Count_per_L'])
-            ax.set_xlabel("Risk Score")
-            ax.set_ylabel("MP Count per L")
-            st.pyplot(fig)
-            st.info("""
-            **Interpretation:**  
-            This scatter plot relates microplastic count per liter to the assigned risk score.
-            A positive correlation suggests that areas with higher microplastic concentrations tend to have higher calculated risk scores.
-            Outliers may represent samples where risk assessment doesn't strictly follow microplastic levels, possibly due to other environmental factors.
-            """)
-        else:
-            st.warning("Required columns not found or empty.")
-
-    elif selected_vis == vis_options[2]:
-        st.subheader("Risk Score by Risk Level")
-        if (
-            'Risk_Level' in df.columns
-            and 'Risk_Score' in df.columns
-            and df['Risk_Score'].notna().sum() > 0
-        ):
-            fig, ax = plt.subplots()
-            sns.boxplot(x=df['Risk_Level'], y=df['Risk_Score'], ax=ax)
-            st.pyplot(fig)
-            st.info("""
-            **Interpretation:**  
-            This boxplot visualizes how risk scores vary across different categorical risk levels.
-            It showcases the central tendency (median) and spread for each risk group.
-            If there is good separation between levels, it means the risk scoring system discriminates well between categories.
-            Overlaps or outliers may suggest inconsistencies or areas needing further analysis.
-            """)
-        else:
-            st.warning("Required columns not found or empty.")
-
 # -----------------------------
-# 4. Visualizations (standalone tab)
+# 5. Visualizations (standalone tab)
 # -----------------------------
-elif selected_tab == tabs[3]:
-    st.header("Step 4: Visualizations & Data Interpretations")
+elif selected_tab == tabs[4]:
+    st.header("Step 5: Visualizations & Data Interpretations")
     df = st.session_state.df
     if df is None or st.session_state.preprocessed is False:
         st.warning("⚠️ Please preprocess the data first.")
@@ -431,12 +387,6 @@ elif selected_tab == tabs[3]:
             fig, ax = plt.subplots()
             sns.histplot(df['Risk_Score'].dropna(), kde=True, ax=ax)
             st.pyplot(fig)
-            st.info("""
-            **Interpretation:**  
-            The histogram shows the distribution of overall risk scores assigned to the water samples. 
-            Peaks in this graph indicate the most common risk levels present in the dataset after preprocessing. 
-            A right-skewed plot would suggest many samples have low risk, while a more uniform or left-skewed shape would suggest higher risk is more prevalent.
-            """)
         else:
             st.warning("Risk_Score column not found or empty.")
 
@@ -453,12 +403,6 @@ elif selected_tab == tabs[3]:
             ax.set_xlabel("Risk Score")
             ax.set_ylabel("MP Count per L")
             st.pyplot(fig)
-            st.info("""
-            **Interpretation:**  
-            This scatter plot relates microplastic count per liter to the assigned risk score.
-            A positive correlation suggests that areas with higher microplastic concentrations tend to have higher calculated risk scores.
-            Outliers may represent samples where risk assessment doesn't strictly follow microplastic levels, possibly due to other environmental factors.
-            """)
         else:
             st.warning("Required columns not found or empty.")
 
@@ -472,12 +416,5 @@ elif selected_tab == tabs[3]:
             fig, ax = plt.subplots()
             sns.boxplot(x=df['Risk_Level'], y=df['Risk_Score'], ax=ax)
             st.pyplot(fig)
-            st.info("""
-            **Interpretation:**  
-            This boxplot visualizes how risk scores vary across different categorical risk levels.
-            It showcases the central tendency (median) and spread for each risk group.
-            If there is good separation between levels, it means the risk scoring system discriminates well between categories.
-            Overlaps or outliers may suggest inconsistencies or areas needing further analysis.
-            """)
         else:
             st.warning("Required columns not found or empty.")
