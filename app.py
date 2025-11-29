@@ -10,6 +10,8 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.base import clone
 
+sns.set_style("whitegrid")
+
 st.set_page_config(page_title="Microplastic Risk Dashboard", page_icon="🧪", layout="wide")
 st.title("🧪 Microplastic Risk Analysis — Enhanced Interactive Dashboard")
 
@@ -29,6 +31,8 @@ selected_tab = st.sidebar.radio("Go to step:", tabs)
 # Session state for data
 if "df" not in st.session_state:
     st.session_state.df = None
+if "raw_df" not in st.session_state:
+    st.session_state.raw_df = None
 if "preprocessed" not in st.session_state:
     st.session_state.preprocessed = False
 
@@ -37,7 +41,7 @@ num_cols = ["MP_Count_per_L", "Risk_Score", "Microplastic_Size_mm_midpoint", "De
 cat_cols = ["Location", "Shape", "Polymer_Type", "pH", "Salinity", "Industrial_Activity",
             "Population_Density", "Risk_Type", "Risk_Level", "Author"]
 
-# Helper to safely plot value counts (returns counts series)
+# Helper functions
 def get_value_counts_for_column(df, col):
     try:
         vc = df[col].value_counts().sort_index()
@@ -61,6 +65,16 @@ def plot_value_counts_bar(vc, title=None, use_seaborn=True):
     st.pyplot(fig)
     plt.close(fig)
 
+def plot_hist_and_box(df, col, bins=30):
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3))
+    sns.histplot(df[col].dropna(), kde=True, bins=bins, ax=axes[0], color="steelblue")
+    axes[0].set_title(f"Histogram: {col}")
+    sns.boxplot(x=df[col].dropna(), ax=axes[1], color="lightgreen")
+    axes[1].set_title(f"Boxplot: {col}")
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
 # -----------------------------
 # 1. Upload & Preview
 # -----------------------------
@@ -73,7 +87,7 @@ if selected_tab == tabs[0]:
                 raw_df = pd.read_csv(uploaded_file, encoding='latin1')
             else:
                 raw_df = pd.read_excel(uploaded_file)
-            # keep raw copy in session in case it's useful later
+            # keep raw copy in session and initialize df
             st.session_state.raw_df = raw_df.copy()
             st.session_state.df = raw_df.copy()
             st.session_state.preprocessed = False
@@ -87,7 +101,7 @@ if selected_tab == tabs[0]:
         except Exception as e:
             st.error(f"Failed to read file: {e}")
             st.stop()
-    elif "raw_df" in st.session_state and st.session_state.raw_df is not None:
+    elif st.session_state.raw_df is not None:
         st.success("Dataset previously uploaded.")
         st.subheader("Dataset Preview (First 10 Rows)")
         st.dataframe(st.session_state.raw_df.head(10), use_container_width=True)
@@ -137,7 +151,6 @@ elif selected_tab == tabs[1]:
             try:
                 df_prep[col] = LabelEncoder().fit_transform(df_prep[col].astype(str))
             except Exception:
-                # fallback: leave as-is if encoding fails
                 pass
 
     # Scaling numeric columns
@@ -167,7 +180,7 @@ elif selected_tab == tabs[1]:
         """)
 
     with st.expander("Compare basic statistics before and after preprocessing", expanded=False):
-        if "raw_df" in st.session_state and st.session_state.raw_df is not None:
+        if st.session_state.raw_df is not None:
             raw = st.session_state.raw_df
             num_cols_present = [col for col in num_cols if col in raw.columns]
             st.write("Original statistics (selected numeric columns):")
@@ -187,7 +200,7 @@ elif selected_tab == tabs[1]:
     st.info("You can view more diagnostics and charts on the '3. Preprocessed Results' tab in the sidebar.")
 
 # -----------------------------
-# 3. Preprocessed Results (separate navigation)
+# 3. Preprocessed Results (separate navigation with distinct windows/tabs)
 # -----------------------------
 elif selected_tab == tabs[2]:
     st.header("Preprocessed Data Results")
@@ -196,101 +209,159 @@ elif selected_tab == tabs[2]:
         st.stop()
 
     df_prep = st.session_state.df
+    raw = st.session_state.raw_df if st.session_state.raw_df is not None else None
 
-    st.subheader("Quick Diagnostics & Summaries")
-    try:
-        st.write("Shape:", df_prep.shape)
-        st.write("Columns:", list(df_prep.columns))
+    # Create tabs to separate each "window" for clearer dashboard
+    results_tabs = st.tabs(["Overview", "Numeric Summaries", "Correlation & Distributions", "Categorical Summaries", "Targets / Class Distribution", "Download"])
 
-        # Missing values summary
-        missing = df_prep.isnull().sum()
-        missing = missing[missing > 0].sort_values(ascending=False)
-        if not missing.empty:
-            st.markdown("Missing values (per column):")
-            st.dataframe(missing)
-        else:
-            st.markdown("No missing values detected in preprocessed dataset.")
+    # Overview tab
+    with results_tabs[0]:
+        st.subheader("Overview")
+        col1, col2 = st.columns([2, 3])
+        with col1:
+            st.metric("Rows", df_prep.shape[0])
+            st.metric("Columns", df_prep.shape[1])
+            st.write("Columns list:")
+            st.write(list(df_prep.columns))
+        with col2:
+            missing = df_prep.isnull().sum()
+            missing = missing[missing > 0].sort_values(ascending=False)
+            if not missing.empty:
+                st.markdown("Missing values (per column):")
+                st.dataframe(missing)
+            else:
+                st.markdown("No missing values detected in preprocessed dataset.")
+        st.markdown("---")
+        with st.expander("Show sample rows (first 20)", expanded=False):
+            st.dataframe(df_prep.head(20), use_container_width=True)
 
-        # Numeric summaries and correlation heatmap
+    # Numeric Summaries tab
+    with results_tabs[1]:
+        st.subheader("Numeric Summaries")
         numeric_cols = df_prep.select_dtypes(include=[np.number]).columns.tolist()
-        if numeric_cols:
-            st.markdown("Numeric features summary (describe):")
+        if not numeric_cols:
+            st.warning("No numeric columns available for summary/plots.")
+        else:
+            st.markdown("Summary statistics for numeric features:")
             st.dataframe(df_prep[numeric_cols].describe().T)
 
-            # Correlation heatmap
+            st.markdown("Select a numeric column to inspect distribution and outliers:")
+            sel_num = st.selectbox("Numeric column", options=numeric_cols)
+            if sel_num:
+                plot_hist_and_box(df_prep, sel_num)
+
+            # Quick multiple histograms (up to 6)
+            st.markdown("Quick distributions (up to 6 numeric features):")
+            n_hist = min(6, len(numeric_cols))
+            if n_hist > 0:
+                cols_to_plot = numeric_cols[:n_hist]
+                rows = (n_hist + 1) // 2
+                fig, axes = plt.subplots(rows, 2, figsize=(12, 4 * rows))
+                axes = np.array(axes).reshape(-1)
+                for i, col in enumerate(cols_to_plot):
+                    sns.histplot(df_prep[col].dropna(), kde=True, ax=axes[i], color="steelblue")
+                    axes[i].set_title(col)
+                for j in range(i + 1, len(axes)):
+                    axes[j].set_visible(False)
+                st.pyplot(fig)
+                plt.close(fig)
+
+    # Correlation & Distributions tab
+    with results_tabs[2]:
+        st.subheader("Correlation & Distributions")
+        numeric_cols = df_prep.select_dtypes(include=[np.number]).columns.tolist()
+        if numeric_cols:
+            st.markdown("Correlation matrix:")
             corr = df_prep[numeric_cols].corr()
-            fig_corr, ax_corr = plt.subplots(figsize=(8, 6))
+            fig_corr, ax_corr = plt.subplots(figsize=(10, max(4, 0.3 * len(numeric_cols))))
             sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", ax=ax_corr)
             ax_corr.set_title("Correlation Matrix (numeric features)")
             st.pyplot(fig_corr)
             plt.close(fig_corr)
+            st.markdown("---")
+            st.markdown("Pairwise scatter (select two numeric features):")
+            pair_cols = st.multiselect("Choose two numeric columns", options=numeric_cols, default=numeric_cols[:2] if len(numeric_cols) >= 2 else numeric_cols)
+            if len(pair_cols) == 2:
+                fig_pair, ax_pair = plt.subplots(figsize=(6, 4))
+                ax_pair.scatter(df_prep[pair_cols[0]], df_prep[pair_cols[1]], alpha=0.7)
+                ax_pair.set_xlabel(pair_cols[0])
+                ax_pair.set_ylabel(pair_cols[1])
+                ax_pair.set_title(f"{pair_cols[0]} vs {pair_cols[1]}")
+                st.pyplot(fig_pair)
+                plt.close(fig_pair)
+            else:
+                st.info("Select exactly two numeric columns to see pairwise scatter.")
 
-            # Histograms for up to 6 numeric features
-            n_hist = min(6, len(numeric_cols))
-            if n_hist > 0:
-                st.markdown(f"Distributions for up to {n_hist} numeric features:")
-                rows = (n_hist + 1) // 2
-                fig_hist, axes = plt.subplots(rows, 2, figsize=(12, 4 * rows))
-                axes = axes.flatten() if n_hist > 1 else [axes]
-                for i, col in enumerate(numeric_cols[:n_hist]):
-                    sns.histplot(df_prep[col].dropna(), kde=True, ax=axes[i])
-                    axes[i].set_title(col)
-                for j in range(i + 1, len(axes)):
-                    axes[j].set_visible(False)
-                st.pyplot(fig_hist)
-                plt.close(fig_hist)
         else:
-            st.markdown("No numeric columns available for summaries/plots.")
+            st.warning("No numeric columns to compute correlation.")
 
-        # Categorical summaries (top value counts)
+    # Categorical Summaries tab
+    with results_tabs[3]:
+        st.subheader("Categorical Summaries")
         present_cats = [c for c in cat_cols if c in df_prep.columns]
-        if present_cats:
-            st.markdown("Categorical columns (top value counts):")
-            for c in present_cats:
-                st.write(f"Column: {c}")
-                try:
-                    vc = df_prep[c].value_counts().head(10)
-                    st.dataframe(vc)
-                    fig_bar, ax_bar = plt.subplots(figsize=(6, 3))
-                    vc.plot(kind='bar', ax=ax_bar)
-                    ax_bar.set_title(f"Top values for {c}")
-                    st.pyplot(fig_bar)
-                    plt.close(fig_bar)
-                except Exception as e:
-                    st.write(f"Could not compute value counts for {c}: {e}")
-        else:
+        if not present_cats:
             st.markdown("No categorical columns found (based on expected categorical list).")
+        else:
+            st.markdown("Top value counts for categorical columns (click to expand each):")
+            for c in present_cats:
+                with st.expander(f"Column: {c}", expanded=False):
+                    try:
+                        # If raw exists and has the column, use raw labels for readability
+                        if raw is not None and c in raw.columns:
+                            st.markdown("Using original/raw labels for readability:")
+                            vc_raw = get_value_counts_for_column(raw, c)
+                            st.dataframe(vc_raw)
+                            plot_value_counts_bar(vc_raw, title=f"{c} (raw labels)")
+                        else:
+                            vc = get_value_counts_for_column(df_prep, c)
+                            st.dataframe(vc.head(20))
+                            plot_value_counts_bar(vc.head(20), title=f"{c} (preprocessed)")
+                    except Exception as e:
+                        st.write(f"Could not compute value counts for {c}: {e}")
 
-        # --- NEW: Class distribution counts for targets ---
-        st.subheader("Class Distribution Counts (Targets)")
-        # Prefer showing original categories if raw_df available, otherwise show preprocessed counts
-        raw = st.session_state.raw_df if "raw_df" in st.session_state else None
-        for target in ["Risk_Type", "Risk_Level"]:
-            st.write(f"Target: {target}")
-            # try raw first (more interpretable labels), else use preprocessed
+    # Targets / Class Distribution tab
+    with results_tabs[4]:
+        st.subheader("Targets / Class Distribution")
+        st.markdown("This section shows the distribution of target classes. Prefer raw/original labels if available.")
+        targets = ["Risk_Type", "Risk_Level"]
+        for target in targets:
+            st.write(f"### {target}")
             if raw is not None and target in raw.columns:
-                vc_raw = get_value_counts_for_column(raw, target)
                 st.markdown("Original (raw) label counts:")
+                vc_raw = get_value_counts_for_column(raw, target)
                 st.dataframe(vc_raw)
-                plot_value_counts_bar(vc_raw, title=f"{target} (raw labels)")
+                plot_value_counts_bar(vc_raw, title=f"{target} (raw)")
+                # pie chart for proportions
+                fig_pie, ax_pie = plt.subplots(figsize=(5, 3))
+                ax_pie.pie(vc_raw.values, labels=[str(x) for x in vc_raw.index], autopct="%1.1f%%", startangle=90)
+                ax_pie.set_title(f"{target} Proportions (raw)")
+                st.pyplot(fig_pie)
+                plt.close(fig_pie)
             elif target in df_prep.columns:
-                vc_prep = get_value_counts_for_column(df_prep, target)
-                # if preprocessed labels are numeric (encoded), display counts and warn
                 st.markdown("Preprocessed label counts (may be encoded integers):")
+                vc_prep = get_value_counts_for_column(df_prep, target)
                 st.dataframe(vc_prep)
                 plot_value_counts_bar(vc_prep, title=f"{target} (preprocessed)")
+                fig_pie, ax_pie = plt.subplots(figsize=(5, 3))
+                ax_pie.pie(vc_prep.values, labels=[str(x) for x in vc_prep.index], autopct="%1.1f%%", startangle=90)
+                ax_pie.set_title(f"{target} Proportions (preprocessed)")
+                st.pyplot(fig_pie)
+                plt.close(fig_pie)
             else:
                 st.write(f"{target} not found in dataset.")
-    except Exception as e:
-        st.error(f"Failed to generate preprocessed data results: {e}")
 
-    # Provide an option to download the preprocessed data
-    try:
-        csv = df_prep.to_csv(index=False).encode('utf-8')
-        st.download_button("Download preprocessed data (CSV)", data=csv, file_name="preprocessed_data.csv", mime="text/csv")
-    except Exception:
-        # ignore if download button not supported in environment
-        pass
+    # Download tab
+    with results_tabs[5]:
+        st.subheader("Download / Export")
+        st.markdown("Download the preprocessed dataset for further analysis.")
+        try:
+            csv = df_prep.to_csv(index=False).encode('utf-8')
+            st.download_button("Download preprocessed data (CSV)", data=csv, file_name="preprocessed_data.csv", mime="text/csv")
+        except Exception:
+            st.warning("Download not supported in this environment.")
+        st.markdown("---")
+        st.markdown("You can also preview a cleaned sample (first 100 rows):")
+        st.dataframe(df_prep.head(100), use_container_width=True)
 
 # -----------------------------
 # 4. Modeling & Performance
@@ -307,7 +378,7 @@ elif selected_tab == tabs[3]:
 
     # Show class distribution before modeling to inform users about class imbalance
     st.subheader("Class Distribution Before Modeling")
-    raw = st.session_state.raw_df if "raw_df" in st.session_state else None
+    raw = st.session_state.raw_df if st.session_state.raw_df is not None else None
     for target in ["Risk_Type", "Risk_Level"]:
         st.write(f"Target: {target}")
         if raw is not None and target in raw.columns:
@@ -422,6 +493,7 @@ elif selected_tab == tabs[3]:
     perf_df.plot(kind='bar', ax=ax)
     ax.set_title("Model Comparison on Test Set (Risk Type)")
     st.pyplot(fig)
+    plt.close(fig)
     st.info("This bar chart visually compares model performance across key metrics for Risk Type classification.")
 
 # -----------------------------
@@ -438,7 +510,7 @@ elif selected_tab == tabs[4]:
         "Risk Score Distribution",
         "Risk Score vs MP_Count_per_L",
         "Risk Score by Risk Level",
-        "Class Distribution"  # NEW option
+        "Class Distribution"
     ]
     selected_vis = st.sidebar.selectbox("Choose a visualization:", vis_options, index=0)
 
