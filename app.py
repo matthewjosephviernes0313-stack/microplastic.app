@@ -19,12 +19,12 @@ st.sidebar.title("Navigation")
 tabs = [
     "1. Upload & Preview",
     "2. Data Preprocessing",
-    "3. Visualizations",
-    "4. Modeling & Performance"
+    "3. Modeling & Performance",
+    "4. Visualizations"
 ]
 selected_tab = st.sidebar.radio("Go to step:", tabs)
 
-# Initialize session state to preserve the dataframe after upload/preprocessing
+# Initialize session state
 if "df" not in st.session_state:
     st.session_state.df = None
 if "preprocessed" not in st.session_state:
@@ -64,9 +64,7 @@ elif selected_tab == tabs[1]:
         st.warning("Please upload data in Step 1 first.")
         st.stop()
 
-    # -----------------------------
-    # Outlier Handling, Skewness, Encoding, Scaling
-    # -----------------------------
+    # Outlier handling, skewness, encoding, scaling
     num_cols = ["MP_Count_per_L", "Risk_Score", "Microplastic_Size_mm_midpoint", "Density_midpoint"]
     cat_cols = ["Location", "Shape", "Polymer_Type", "pH", "Salinity", "Industrial_Activity",
                 "Population_Density", "Risk_Type", "Risk_Level", "Author"]
@@ -100,87 +98,13 @@ elif selected_tab == tabs[1]:
 
     st.session_state.df = df_prep
     st.session_state.preprocessed = True
-    st.success("Data preprocessed! Now explore visualizations or run models.")
+    st.success("Data preprocessed! Now run models or explore visualizations.")
 
 # -----------------------------
-# 3. Visualizations
+# 3. Modeling & Performance
 # -----------------------------
 elif selected_tab == tabs[2]:
-    st.header("Step 3: Visualizations & Data Interpretations")
-    df = st.session_state.df
-    if df is None or st.session_state.preprocessed is False:
-        st.warning("Please preprocess the data first.")
-        st.stop()
-
-    vis_options = [
-        "Risk Score Distribution",
-        "Risk Score vs MP_Count_per_L",
-        "Risk Score by Risk Level"
-    ]
-    selected_vis = st.sidebar.selectbox("Choose a visualization:", vis_options)
-
-    if selected_vis == vis_options[0]:
-        st.subheader("Risk Score Distribution")
-        if 'Risk_Score' in df.columns and df['Risk_Score'].notna().sum() > 0:
-            fig, ax = plt.subplots()
-            sns.histplot(df['Risk_Score'].dropna(), kde=True, ax=ax)
-            st.pyplot(fig)
-            st.info("""
-            **Interpretation:**  
-            The histogram shows the distribution of overall risk scores assigned to the water samples. 
-            Peaks in this graph indicate the most common risk levels present in the dataset after preprocessing. 
-            A right-skewed plot would suggest many samples have low risk, while a more uniform or left-skewed shape would suggest higher risk is more prevalent.
-            """)
-        else:
-            st.warning("Risk_Score column not found or empty.")
-
-    elif selected_vis == vis_options[1]:
-        st.subheader("Risk Score vs MP Count per Liter")
-        if (
-            'Risk_Score' in df.columns
-            and 'MP_Count_per_L' in df.columns
-            and df['Risk_Score'].notna().sum() > 0
-            and df['MP_Count_per_L'].notna().sum() > 0
-        ):
-            fig, ax = plt.subplots()
-            ax.scatter(df['Risk_Score'], df['MP_Count_per_L'])
-            ax.set_xlabel("Risk Score")
-            ax.set_ylabel("MP Count per L")
-            st.pyplot(fig)
-            st.info("""
-            **Interpretation:**  
-            This scatter plot relates microplastic count per liter to the assigned risk score.
-            A positive correlation suggests that areas with higher microplastic concentrations tend to have higher calculated risk scores.
-            Outliers may represent samples where risk assessment doesn't strictly follow microplastic levels, possibly due to other environmental factors.
-            """)
-        else:
-            st.warning("Required columns not found or empty.")
-
-    elif selected_vis == vis_options[2]:
-        st.subheader("Risk Score by Risk Level")
-        if (
-            'Risk_Level' in df.columns
-            and 'Risk_Score' in df.columns
-            and df['Risk_Score'].notna().sum() > 0
-        ):
-            fig, ax = plt.subplots()
-            sns.boxplot(x=df['Risk_Level'], y=df['Risk_Score'], ax=ax)
-            st.pyplot(fig)
-            st.info("""
-            **Interpretation:**  
-            This boxplot visualizes how risk scores vary across different categorical risk levels.
-            It showcases the central tendency (median) and spread for each risk group.
-            If there is good separation between levels, it means the risk scoring system discriminates well between categories.
-            Overlaps or outliers may suggest inconsistencies or areas needing further analysis.
-            """)
-        else:
-            st.warning("Required columns not found or empty.")
-
-# -----------------------------
-# 4. Modeling & Performance
-# -----------------------------
-elif selected_tab == tabs[3]:
-    st.header("Step 4: Modeling & Performance")
+    st.header("Step 3: Modeling & Performance")
     df = st.session_state.df
     if df is None or st.session_state.preprocessed is False:
         st.warning("Please preprocess the data first.")
@@ -281,3 +205,145 @@ elif selected_tab == tabs[3]:
     This bar chart visually compares model performance across key metrics for Risk Type classification. 
     Use it to select the best performing model for further analysis or deployment.
     """)
+
+    # -----------------------------
+    # Visualizations BELOW modeling
+    # -----------------------------
+    st.header("Step 4: Visualizations & Data Interpretations")
+    vis_options = [
+        "Risk Score Distribution",
+        "Risk Score vs MP_Count_per_L",
+        "Risk Score by Risk Level"
+    ]
+    selected_vis = st.sidebar.selectbox("Choose a visualization:", vis_options, index=0)
+
+    if selected_vis == vis_options[0]:
+        st.subheader("Risk Score Distribution")
+        if 'Risk_Score' in df.columns and df['Risk_Score'].notna().sum() > 0:
+            fig, ax = plt.subplots()
+            sns.histplot(df['Risk_Score'].dropna(), kde=True, ax=ax)
+            st.pyplot(fig)
+            st.info("""
+            **Interpretation:**  
+            The histogram shows the distribution of overall risk scores assigned to the water samples. 
+            Peaks in this graph indicate the most common risk levels present in the dataset after preprocessing. 
+            A right-skewed plot would suggest many samples have low risk, while a more uniform or left-skewed shape would suggest higher risk is more prevalent.
+            """)
+        else:
+            st.warning("Risk_Score column not found or empty.")
+
+    elif selected_vis == vis_options[1]:
+        st.subheader("Risk Score vs MP Count per Liter")
+        if (
+            'Risk_Score' in df.columns
+            and 'MP_Count_per_L' in df.columns
+            and df['Risk_Score'].notna().sum() > 0
+            and df['MP_Count_per_L'].notna().sum() > 0
+        ):
+            fig, ax = plt.subplots()
+            ax.scatter(df['Risk_Score'], df['MP_Count_per_L'])
+            ax.set_xlabel("Risk Score")
+            ax.set_ylabel("MP Count per L")
+            st.pyplot(fig)
+            st.info("""
+            **Interpretation:**  
+            This scatter plot relates microplastic count per liter to the assigned risk score.
+            A positive correlation suggests that areas with higher microplastic concentrations tend to have higher calculated risk scores.
+            Outliers may represent samples where risk assessment doesn't strictly follow microplastic levels, possibly due to other environmental factors.
+            """)
+        else:
+            st.warning("Required columns not found or empty.")
+
+    elif selected_vis == vis_options[2]:
+        st.subheader("Risk Score by Risk Level")
+        if (
+            'Risk_Level' in df.columns
+            and 'Risk_Score' in df.columns
+            and df['Risk_Score'].notna().sum() > 0
+        ):
+            fig, ax = plt.subplots()
+            sns.boxplot(x=df['Risk_Level'], y=df['Risk_Score'], ax=ax)
+            st.pyplot(fig)
+            st.info("""
+            **Interpretation:**  
+            This boxplot visualizes how risk scores vary across different categorical risk levels.
+            It showcases the central tendency (median) and spread for each risk group.
+            If there is good separation between levels, it means the risk scoring system discriminates well between categories.
+            Overlaps or outliers may suggest inconsistencies or areas needing further analysis.
+            """)
+        else:
+            st.warning("Required columns not found or empty.")
+
+# -----------------------------
+# 4. Visualizations (standalone - no modeling)
+# -----------------------------
+elif selected_tab == tabs[3]:
+    st.header("Step 4: Visualizations & Data Interpretations")
+    df = st.session_state.df
+    if df is None or st.session_state.preprocessed is False:
+        st.warning("Please preprocess the data first.")
+        st.stop()
+
+    vis_options = [
+        "Risk Score Distribution",
+        "Risk Score vs MP_Count_per_L",
+        "Risk Score by Risk Level"
+    ]
+    selected_vis = st.sidebar.selectbox("Choose a visualization:", vis_options, index=0)
+
+    if selected_vis == vis_options[0]:
+        st.subheader("Risk Score Distribution")
+        if 'Risk_Score' in df.columns and df['Risk_Score'].notna().sum() > 0:
+            fig, ax = plt.subplots()
+            sns.histplot(df['Risk_Score'].dropna(), kde=True, ax=ax)
+            st.pyplot(fig)
+            st.info("""
+            **Interpretation:**  
+            The histogram shows the distribution of overall risk scores assigned to the water samples. 
+            Peaks in this graph indicate the most common risk levels present in the dataset after preprocessing. 
+            A right-skewed plot would suggest many samples have low risk, while a more uniform or left-skewed shape would suggest higher risk is more prevalent.
+            """)
+        else:
+            st.warning("Risk_Score column not found or empty.")
+
+    elif selected_vis == vis_options[1]:
+        st.subheader("Risk Score vs MP Count per Liter")
+        if (
+            'Risk_Score' in df.columns
+            and 'MP_Count_per_L' in df.columns
+            and df['Risk_Score'].notna().sum() > 0
+            and df['MP_Count_per_L'].notna().sum() > 0
+        ):
+            fig, ax = plt.subplots()
+            ax.scatter(df['Risk_Score'], df['MP_Count_per_L'])
+            ax.set_xlabel("Risk Score")
+            ax.set_ylabel("MP Count per L")
+            st.pyplot(fig)
+            st.info("""
+            **Interpretation:**  
+            This scatter plot relates microplastic count per liter to the assigned risk score.
+            A positive correlation suggests that areas with higher microplastic concentrations tend to have higher calculated risk scores.
+            Outliers may represent samples where risk assessment doesn't strictly follow microplastic levels, possibly due to other environmental factors.
+            """)
+        else:
+            st.warning("Required columns not found or empty.")
+
+    elif selected_vis == vis_options[2]:
+        st.subheader("Risk Score by Risk Level")
+        if (
+            'Risk_Level' in df.columns
+            and 'Risk_Score' in df.columns
+            and df['Risk_Score'].notna().sum() > 0
+        ):
+            fig, ax = plt.subplots()
+            sns.boxplot(x=df['Risk_Level'], y=df['Risk_Score'], ax=ax)
+            st.pyplot(fig)
+            st.info("""
+            **Interpretation:**  
+            This boxplot visualizes how risk scores vary across different categorical risk levels.
+            It showcases the central tendency (median) and spread for each risk group.
+            If there is good separation between levels, it means the risk scoring system discriminates well between categories.
+            Overlaps or outliers may suggest inconsistencies or areas needing further analysis.
+            """)
+        else:
+            st.warning("Required columns not found or empty.")
