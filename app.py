@@ -10,7 +10,7 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 st.set_page_config(page_title="Microplastic Risk Dashboard", page_icon="🧪", layout="wide")
-st.title("🧪 Microplastic Risk Analysis — Interactive Dashboard")
+st.title("🧪 Microplastic Risk Analysis — Enhanced Interactive Dashboard")
 
 # -----------------------------
 # Sidebar Navigation
@@ -24,7 +24,7 @@ tabs = [
 ]
 selected_tab = st.sidebar.radio("Go to step:", tabs)
 
-# Initialize session state
+# Initialize session state to preserve the dataframe
 if "df" not in st.session_state:
     st.session_state.df = None
 if "preprocessed" not in st.session_state:
@@ -43,25 +43,39 @@ if selected_tab == tabs[0]:
             else:
                 df = pd.read_excel(uploaded_file)
             st.session_state.df = df
-            st.subheader("Dataset Preview")
-            st.dataframe(df.head())
-            st.success("Dataset uploaded! Proceed to Data Preprocessing.")
+            st.success("✅ Dataset uploaded successfully! Preview below:")
+            st.subheader("Dataset Preview (First 10 Rows)")
+            st.dataframe(df.head(10), use_container_width=True)
+            st.markdown("""
+            <details>
+            <summary style='font-weight:bold'>Show full uploaded dataset</summary>
+            """, unsafe_allow_html=True)
+            st.dataframe(df, use_container_width=True)
+            st.markdown("</details>", unsafe_allow_html=True)
+            st.info("Proceed to Data Preprocessing for cleaning and transformation.")
         except Exception as e:
             st.error(f"Failed to read file: {e}")
             st.stop()
     elif st.session_state.df is not None:
-        st.subheader("Previously Uploaded Data Preview")
-        st.dataframe(st.session_state.df.head())
+        st.success("Dataset previously uploaded.")
+        st.subheader("Dataset Preview (First 10 Rows)")
+        st.dataframe(st.session_state.df.head(10), use_container_width=True)
+        st.markdown("""
+        <details>
+        <summary style='font-weight:bold'>Show full uploaded dataset</summary>
+        """, unsafe_allow_html=True)
+        st.dataframe(st.session_state.df, use_container_width=True)
+        st.markdown("</details>", unsafe_allow_html=True)
         st.info("You may continue to Data Preprocessing.")
 
 # -----------------------------
 # 2. Data Preprocessing
 # -----------------------------
 elif selected_tab == tabs[1]:
-    st.header("Step 2: Preprocess Data")
+    st.header("Step 2: Data Preprocessing")
     df = st.session_state.df
     if df is None:
-        st.warning("Please upload data in Step 1 first.")
+        st.warning("⚠️ Please upload a dataset in Step 1 first.")
         st.stop()
 
     # Outlier handling, skewness, encoding, scaling
@@ -70,47 +84,77 @@ elif selected_tab == tabs[1]:
                 "Population_Density", "Risk_Type", "Risk_Level", "Author"]
 
     df_prep = df.copy()
+    # Outlier handling & skewness
+    outlier_report = []
     for col in num_cols:
         if col in df_prep.columns:
+            orig_stats = df_prep[col].describe()
             df_prep[col] = pd.to_numeric(df_prep[col], errors='coerce')
+            nan_count = df_prep[col].isna().sum()
             if df_prep[col].notna().sum() > 0:
                 Q1 = df_prep[col].quantile(0.25)
                 Q3 = df_prep[col].quantile(0.75)
                 IQR = Q3 - Q1
                 lower = Q1 - 1.5 * IQR
                 upper = Q3 + 1.5 * IQR
+                num_clipped = ((df_prep[col] < lower) | (df_prep[col] > upper)).sum()
                 df_prep[col] = np.clip(df_prep[col], lower, upper)
+                outlier_report.append(f"- **{col}**: {num_clipped} outliers clipped. {nan_count} NaNs.")
             skew = df_prep[col].skew()
             if df_prep[col].notna().sum() > 0 and skew > 1:
                 safe_log = df_prep[col] > -1
                 df_prep.loc[safe_log, col] = np.log1p(df_prep.loc[safe_log, col])
+                outlier_report.append(f"- **{col}**: Log transformation applied (skew={skew:.2f}).")
+            # Show before/after stats in expanded details
+    # Encoding
     for col in cat_cols:
         if col in df_prep.columns:
             df_prep[col] = LabelEncoder().fit_transform(df_prep[col].astype(str))
+    # Scaling
     scaler = StandardScaler()
     for col in num_cols:
         if col in df_prep.columns and df_prep[col].notna().sum() > 0:
             df_prep[col] = scaler.fit_transform(df_prep[[col]])
 
-    st.subheader("Preprocessed Dataset Preview")
-    st.dataframe(df_prep.head())
-    st.info("Outlier handling, skewness transformation, categorical encoding, and scaling applied.")
-
     st.session_state.df = df_prep
     st.session_state.preprocessed = True
-    st.success("Data preprocessed! Now run models or explore visualizations.")
+
+    st.success("✅ Data preprocessing complete!")
+    st.subheader("Preprocessed Dataset (First 10 Rows)")
+    st.dataframe(df_prep.head(10), use_container_width=True)
+    st.markdown("""
+    <details>
+    <summary style='font-weight:bold'>Show full preprocessed dataset</summary>
+    """, unsafe_allow_html=True)
+    st.dataframe(df_prep, use_container_width=True)
+    st.markdown("</details>", unsafe_allow_html=True)
+
+    with st.expander("Preprocessing Details & Report", expanded=False):
+        st.markdown("**Outlier & Skewness Report:**")
+        for report in outlier_report:
+            st.markdown(report)
+        st.markdown("""
+        - **Categorical Encoding:** All categorical columns transformed with LabelEncoder.
+        - **Scaling:** All numerical columns standardized using StandardScaler.
+        """)
+
+    with st.expander("Compare basic statistics before and after preprocessing", expanded=False):
+        st.write("Original statistics (first numeric columns):")
+        st.dataframe(df[num_cols].describe().T)
+        st.write("After preprocessing:")
+        st.dataframe(df_prep[num_cols].describe().T)
 
 # -----------------------------
-# 3. Modeling & Performance
+# 3. Modeling & Performance (includes visualizations below)
 # -----------------------------
 elif selected_tab == tabs[2]:
     st.header("Step 3: Modeling & Performance")
     df = st.session_state.df
     if df is None or st.session_state.preprocessed is False:
-        st.warning("Please preprocess the data first.")
+        st.warning("⚠️ Please preprocess the data first.")
         st.stop()
     if "Risk_Type" not in df.columns or "Risk_Level" not in df.columns:
-        st.warning("Required columns for modeling not found in data.")
+        st.warning("⚠️ Required columns for modeling not found in data.")
         st.stop()
 
     X = df.drop(columns=["Risk_Type", "Risk_Level"], errors="ignore")
@@ -148,7 +192,7 @@ elif selected_tab == tabs[2]:
         "F1-Score": f1_score(y_test_type, preds_type, average='weighted', zero_division=0)
     }
     st.write("Risk Type Classification Metrics")
-    st.dataframe(pd.DataFrame(perf_type, index=[selected_model]).T)
+    st.dataframe(pd.DataFrame(perf_type, index=[selected_model]).T, use_container_width=True)
     st.info("""
     **Interpretation:**  
     These metrics indicate how well the selected model predicts Risk_Type categories.
@@ -165,7 +209,7 @@ elif selected_tab == tabs[2]:
         "F1-Score": f1_score(y_test_level, preds_level, average='weighted', zero_division=0)
     }
     st.write("Risk Level Classification Metrics")
-    st.dataframe(pd.DataFrame(perf_level, index=[selected_model]).T)
+    st.dataframe(pd.DataFrame(perf_level, index=[selected_model]).T, use_container_width=True)
     st.info("""
     **Interpretation:**  
     These scores reflect the ability of your model to classify Risk Level groups.
@@ -275,13 +319,13 @@ elif selected_tab == tabs[2]:
             st.warning("Required columns not found or empty.")
 
 # -----------------------------
-# 4. Visualizations (standalone - no modeling)
+# 4. Visualizations (standalone tab)
 # -----------------------------
 elif selected_tab == tabs[3]:
     st.header("Step 4: Visualizations & Data Interpretations")
     df = st.session_state.df
     if df is None or st.session_state.preprocessed is False:
-        st.warning("Please preprocess the data first.")
+        st.warning("⚠️ Please preprocess the data first.")
         st.stop()
 
     vis_options = [
