@@ -14,7 +14,7 @@ st.set_page_config(page_title="Microplastic Risk Dashboard", page_icon="🧪", l
 st.title("🧪 Microplastic Risk Analysis — Enhanced Interactive Dashboard")
 
 # -----------------------------
-# Sidebar Navigation (now includes a dedicated Preprocessed Results page)
+# Sidebar Navigation (includes Preprocessed Results page)
 # -----------------------------
 st.sidebar.title("Navigation")
 tabs = [
@@ -36,6 +36,30 @@ if "preprocessed" not in st.session_state:
 num_cols = ["MP_Count_per_L", "Risk_Score", "Microplastic_Size_mm_midpoint", "Density_midpoint"]
 cat_cols = ["Location", "Shape", "Polymer_Type", "pH", "Salinity", "Industrial_Activity",
             "Population_Density", "Risk_Type", "Risk_Level", "Author"]
+
+# Helper to safely plot value counts (returns counts series)
+def get_value_counts_for_column(df, col):
+    try:
+        vc = df[col].value_counts().sort_index()
+        return vc
+    except Exception:
+        return pd.Series(dtype=int)
+
+def plot_value_counts_bar(vc, title=None, use_seaborn=True):
+    if vc is None or vc.empty:
+        st.write("No values to display.")
+        return
+    fig, ax = plt.subplots(figsize=(6, 3))
+    if use_seaborn:
+        sns.barplot(x=vc.index.astype(str), y=vc.values, ax=ax, palette="viridis")
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
+    else:
+        vc.plot(kind="bar", ax=ax)
+    ax.set_ylabel("Count")
+    if title:
+        ax.set_title(title)
+    st.pyplot(fig)
+    plt.close(fig)
 
 # -----------------------------
 # 1. Upload & Preview
@@ -163,7 +187,7 @@ elif selected_tab == tabs[1]:
     st.info("You can view more diagnostics and charts on the '3. Preprocessed Results' tab in the sidebar.")
 
 # -----------------------------
-# 3. Preprocessed Results (NEW separate navigation)
+# 3. Preprocessed Results (separate navigation)
 # -----------------------------
 elif selected_tab == tabs[2]:
     st.header("Preprocessed Data Results")
@@ -236,6 +260,27 @@ elif selected_tab == tabs[2]:
                     st.write(f"Could not compute value counts for {c}: {e}")
         else:
             st.markdown("No categorical columns found (based on expected categorical list).")
+
+        # --- NEW: Class distribution counts for targets ---
+        st.subheader("Class Distribution Counts (Targets)")
+        # Prefer showing original categories if raw_df available, otherwise show preprocessed counts
+        raw = st.session_state.raw_df if "raw_df" in st.session_state else None
+        for target in ["Risk_Type", "Risk_Level"]:
+            st.write(f"Target: {target}")
+            # try raw first (more interpretable labels), else use preprocessed
+            if raw is not None and target in raw.columns:
+                vc_raw = get_value_counts_for_column(raw, target)
+                st.markdown("Original (raw) label counts:")
+                st.dataframe(vc_raw)
+                plot_value_counts_bar(vc_raw, title=f"{target} (raw labels)")
+            elif target in df_prep.columns:
+                vc_prep = get_value_counts_for_column(df_prep, target)
+                # if preprocessed labels are numeric (encoded), display counts and warn
+                st.markdown("Preprocessed label counts (may be encoded integers):")
+                st.dataframe(vc_prep)
+                plot_value_counts_bar(vc_prep, title=f"{target} (preprocessed)")
+            else:
+                st.write(f"{target} not found in dataset.")
     except Exception as e:
         st.error(f"Failed to generate preprocessed data results: {e}")
 
@@ -248,7 +293,7 @@ elif selected_tab == tabs[2]:
         pass
 
 # -----------------------------
-# 4. Modeling & Performance (now shifted to index 4)
+# 4. Modeling & Performance
 # -----------------------------
 elif selected_tab == tabs[3]:
     st.header("Step 4: Modeling & Performance")
@@ -259,6 +304,21 @@ elif selected_tab == tabs[3]:
     if "Risk_Type" not in df.columns or "Risk_Level" not in df.columns:
         st.warning("⚠️ Required columns for modeling not found in data.")
         st.stop()
+
+    # Show class distribution before modeling to inform users about class imbalance
+    st.subheader("Class Distribution Before Modeling")
+    raw = st.session_state.raw_df if "raw_df" in st.session_state else None
+    for target in ["Risk_Type", "Risk_Level"]:
+        st.write(f"Target: {target}")
+        if raw is not None and target in raw.columns:
+            vc_raw = get_value_counts_for_column(raw, target)
+            st.dataframe(vc_raw)
+            plot_value_counts_bar(vc_raw, title=f"{target} (raw labels)")
+        else:
+            vc_prep = get_value_counts_for_column(df, target)
+            st.markdown("Preprocessed label counts (may be encoded integers):")
+            st.dataframe(vc_prep)
+            plot_value_counts_bar(vc_prep, title=f"{target} (preprocessed)")
 
     X = df.drop(columns=["Risk_Type", "Risk_Level"], errors="ignore")
     y_type = df['Risk_Type']
@@ -377,7 +437,8 @@ elif selected_tab == tabs[4]:
     vis_options = [
         "Risk Score Distribution",
         "Risk Score vs MP_Count_per_L",
-        "Risk Score by Risk Level"
+        "Risk Score by Risk Level",
+        "Class Distribution"  # NEW option
     ]
     selected_vis = st.sidebar.selectbox("Choose a visualization:", vis_options, index=0)
 
@@ -387,6 +448,7 @@ elif selected_tab == tabs[4]:
             fig, ax = plt.subplots()
             sns.histplot(df['Risk_Score'].dropna(), kde=True, ax=ax)
             st.pyplot(fig)
+            plt.close(fig)
         else:
             st.warning("Risk_Score column not found or empty.")
 
@@ -403,6 +465,7 @@ elif selected_tab == tabs[4]:
             ax.set_xlabel("Risk Score")
             ax.set_ylabel("MP Count per L")
             st.pyplot(fig)
+            plt.close(fig)
         else:
             st.warning("Required columns not found or empty.")
 
@@ -416,5 +479,24 @@ elif selected_tab == tabs[4]:
             fig, ax = plt.subplots()
             sns.boxplot(x=df['Risk_Level'], y=df['Risk_Score'], ax=ax)
             st.pyplot(fig)
+            plt.close(fig)
         else:
             st.warning("Required columns not found or empty.")
+
+    elif selected_vis == vis_options[3]:
+        st.subheader("Class Distribution Counts")
+        raw = st.session_state.raw_df if "raw_df" in st.session_state else None
+        for target in ["Risk_Type", "Risk_Level"]:
+            st.write(f"Target: {target}")
+            if raw is not None and target in raw.columns:
+                vc_raw = get_value_counts_for_column(raw, target)
+                st.markdown("Original (raw) label counts:")
+                st.dataframe(vc_raw)
+                plot_value_counts_bar(vc_raw, title=f"{target} (raw labels)")
+            elif target in df.columns:
+                vc_prep = get_value_counts_for_column(df, target)
+                st.markdown("Preprocessed label counts (may be encoded integers):")
+                st.dataframe(vc_prep)
+                plot_value_counts_bar(vc_prep, title=f"{target} (preprocessed)")
+            else:
+                st.write(f"{target} not found in dataset.")
