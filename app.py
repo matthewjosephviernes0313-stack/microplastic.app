@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -482,4 +481,3 @@ elif selected_tab == tabs[3]:
             """)
         else:
             st.warning("Required columns not found or empty.")
-```
