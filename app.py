@@ -9,7 +9,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
-st.title("Microplastic Risk Analysis — Full Preprocessing & Modeling App (Fixed Version)")
+st.title("Microplastic Risk Analysis — Full Preprocessing & Modeling App (Fully Fixed Version)")
 
 # -----------------------------
 # File Upload Section
@@ -30,12 +30,12 @@ if uploaded_file:
     st.dataframe(df.head())
 
     # -----------------------------
-    # Outlier Handling (FIXED)
+    # Outlier Handling (Robust)
     # -----------------------------
     num_cols = ["MP_Count_per_L", "Risk_Score", "Microplastic_Size_mm_midpoint", "Density_midpoint"]
     for col in num_cols:
         if col in df.columns:
-            # Convert to numeric, coerce bad values to NaN
+            # Convert to numeric for quantile and clip ops
             df[col] = pd.to_numeric(df[col], errors='coerce')
             # Only clip if not all NaN
             if df[col].notna().sum() > 0:
@@ -45,17 +45,18 @@ if uploaded_file:
                 lower = Q1 - 1.5 * IQR
                 upper = Q3 + 1.5 * IQR
                 df[col] = np.clip(df[col], lower, upper)
-            # If all NaN, don't clip
 
     # -----------------------------
-    # Skewness Transformation (FIXED)
+    # Skewness Transformation
     # -----------------------------
     for col in num_cols:
         if col in df.columns and df[col].notna().sum() > 0:
-            # Use skew only on non-NaN values; skip if all NaN
-            if df[col].skew() > 1:
-                df[col] = np.log1p(df[col])
-    
+            # Only apply log1p if values > 0 to avoid log(0) and log(negative)
+            skew = df[col].skew()
+            if skew > 1:
+                safe_log = df[col] > -1  # log1p(x) only safe for x > -1
+                df.loc[safe_log, col] = np.log1p(df.loc[safe_log, col])
+
     # -----------------------------
     # Encoding Categorical Variables
     # -----------------------------
@@ -64,6 +65,7 @@ if uploaded_file:
 
     for col in cat_cols:
         if col in df.columns:
+            # Use astype(str) to clean up mixed types
             df[col] = LabelEncoder().fit_transform(df[col].astype(str))
 
     # -----------------------------
@@ -72,8 +74,8 @@ if uploaded_file:
     scaler = StandardScaler()
     for col in num_cols:
         if col in df.columns and df[col].notna().sum() > 0:
+            # Reshape for scaler
             df[col] = scaler.fit_transform(df[[col]])
-        # If all NaN, skip scaling
 
     st.subheader("Preprocessed Dataset")
     st.dataframe(df.head())
@@ -90,7 +92,12 @@ if uploaded_file:
     # -----------------------------
     # Risk Score vs MP Count
     # -----------------------------
-    if 'Risk_Score' in df.columns and 'MP_Count_per_L' in df.columns and df['Risk_Score'].notna().sum() > 0 and df['MP_Count_per_L'].notna().sum() > 0:
+    if (
+        'Risk_Score' in df.columns
+        and 'MP_Count_per_L' in df.columns
+        and df['Risk_Score'].notna().sum() > 0
+        and df['MP_Count_per_L'].notna().sum() > 0
+    ):
         st.subheader("Risk Score vs MP_Count_per_L")
         fig, ax = plt.subplots()
         ax.scatter(df['Risk_Score'], df['MP_Count_per_L'])
@@ -101,24 +108,37 @@ if uploaded_file:
     # -----------------------------
     # Risk Score by Risk Level
     # -----------------------------
-    if 'Risk_Level' in df.columns and 'Risk_Score' in df.columns and df['Risk_Score'].notna().sum() > 0:
+    if (
+        'Risk_Level' in df.columns
+        and 'Risk_Score' in df.columns
+        and df['Risk_Score'].notna().sum() > 0
+    ):
         st.subheader("Risk Score by Risk Level")
         fig, ax = plt.subplots()
         sns.boxplot(x=df['Risk_Level'], y=df['Risk_Score'], ax=ax)
         st.pyplot(fig)
 
     # -----------------------------
-    # Modeling
+    # Modeling (Full Fix)
     # -----------------------------
     if "Risk_Type" in df.columns and "Risk_Level" in df.columns:
+        # Prepare features and targets
         X = df.drop(columns=["Risk_Type", "Risk_Level"])
         y_type = df['Risk_Type']
         y_level = df['Risk_Level']
-
-        # Remove rows with NaNs for modeling
+        
+        # Remove non-numeric columns from X
+        X = X.select_dtypes(include=[np.number])
+        # Replace inf/-inf, then fill NaN
+        X = X.replace([np.inf, -np.inf], np.nan)
         X = X.fillna(0)
         y_type = y_type.fillna(0)
         y_level = y_level.fillna(0)
+
+        st.write("Model features (X) types:")
+        st.write(X.dtypes)
+        st.write("Preview features (X):")
+        st.write(X.head())
 
         X_train, X_test, y_train_type, y_test_type = train_test_split(X, y_type, test_size=0.2, random_state=42)
         _, _, y_train_level, y_test_level = train_test_split(X, y_level, test_size=0.2, random_state=42)
