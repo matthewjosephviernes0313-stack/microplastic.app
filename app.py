@@ -8,6 +8,7 @@ from sklearn.model_selection import train_test_split, KFold, cross_val_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.base import clone
 
 st.set_page_config(page_title="Microplastic Risk Dashboard", page_icon="🧪", layout="wide")
 st.title("🧪 Microplastic Risk Analysis — Enhanced Interactive Dashboard")
@@ -151,7 +152,7 @@ elif selected_tab == tabs[1]:
             st.warning("No valid numeric columns found for statistics in the preprocessed dataset.")
 
 # -----------------------------
-# 3. Modeling & Performance (includes visualizations below)
+# 3. Modeling & Performance (updated to give each model its own window/tab)
 # -----------------------------
 elif selected_tab == tabs[2]:
     st.header("Step 3: Modeling & Performance")
@@ -179,82 +180,93 @@ elif selected_tab == tabs[2]:
         "Gradient Boosting": GradientBoostingClassifier()
     }
 
-    st.sidebar.subheader("Model Selection")
-    selected_model = st.sidebar.selectbox("Choose a model to evaluate:", model_names)
+    st.markdown(
+        "Each model below has its own window with metrics for Risk Type and Risk Level, cross-validation, and short interpretation."
+    )
 
-    st.subheader(f"Performance for {selected_model}")
-
+    # consistent train/test split for fair comparison across models
     X_train, X_test, y_train_type, y_test_type = train_test_split(X, y_type, test_size=0.2, random_state=42)
     _, _, y_train_level, y_test_level = train_test_split(X, y_level, test_size=0.2, random_state=42)
-    model = model_objs[selected_model]
 
-    # Risk Type
-    model.fit(X_train, y_train_type)
-    preds_type = model.predict(X_test)
-    perf_type = {
-        "Accuracy": accuracy_score(y_test_type, preds_type),
-        "Precision": precision_score(y_test_type, preds_type, average='weighted', zero_division=0),
-        "Recall": recall_score(y_test_type, preds_type, average='weighted', zero_division=0),
-        "F1-Score": f1_score(y_test_type, preds_type, average='weighted', zero_division=0)
-    }
-    st.write("Risk Type Classification Metrics")
-    st.dataframe(pd.DataFrame(perf_type, index=[selected_model]).T, use_container_width=True)
-    st.info("""
-    **Interpretation:**  
-    These metrics indicate how well the selected model predicts Risk_Type categories.
-    Precision and recall are especially important for imbalanced classes.
-    """)
+    # Create individual tabs/windows for each model so each has its own view
+    model_tabs = st.tabs(model_names)
+    for idx, name in enumerate(model_names):
+        with model_tabs[idx]:
+            st.subheader(f"{name} — Detailed Results")
+            mod = model_objs[name]
 
-    # Risk Level
-    model.fit(X_train, y_train_level)
-    preds_level = model.predict(X_test)
-    perf_level = {
-        "Accuracy": accuracy_score(y_test_level, preds_level),
-        "Precision": precision_score(y_test_level, preds_level, average='weighted', zero_division=0),
-        "Recall": recall_score(y_test_level, preds_level, average='weighted', zero_division=0),
-        "F1-Score": f1_score(y_test_level, preds_level, average='weighted', zero_division=0)
-    }
-    st.write("Risk Level Classification Metrics")
-    st.dataframe(pd.DataFrame(perf_level, index=[selected_model]).T, use_container_width=True)
-    st.info("""
-    **Interpretation:**  
-    These scores reflect the ability of your model to classify Risk Level groups.
-    High F1-score signals balanced accuracy and precision.
-    """)
+            # Fit and evaluate for Risk Type
+            try:
+                mod_type = clone(mod)
+                mod_type.fit(X_train, y_train_type)
+                preds_type = mod_type.predict(X_test)
+                perf_type = {
+                    "Accuracy": accuracy_score(y_test_type, preds_type),
+                    "Precision": precision_score(y_test_type, preds_type, average='weighted', zero_division=0),
+                    "Recall": recall_score(y_test_type, preds_type, average='weighted', zero_division=0),
+                    "F1-Score": f1_score(y_test_type, preds_type, average='weighted', zero_division=0)
+                }
+                st.write("Risk Type Classification Metrics")
+                st.dataframe(pd.DataFrame(perf_type, index=[name]).T, use_container_width=True)
+            except Exception as e:
+                st.error(f"Failed to evaluate Risk Type for {name}: {e}")
 
-    # K-Fold Cross Validation
-    st.subheader("K-Fold Cross Validation Accuracy (Risk Type)")
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
-    cv_scores = cross_val_score(model, X, y_type, cv=kf, scoring='accuracy')
-    st.bar_chart(cv_scores)
-    st.info("""
-    **Interpretation:**  
-    The bar chart displays cross-validation fold accuracies.
-    Consistent scores across folds mean your model generalizes reliably.
-    Large differences may indicate sensitivity to dataset splits.
-    """)
+            # Fit and evaluate for Risk Level
+            try:
+                mod_level = clone(mod)
+                mod_level.fit(X_train, y_train_level)
+                preds_level = mod_level.predict(X_test)
+                perf_level = {
+                    "Accuracy": accuracy_score(y_test_level, preds_level),
+                    "Precision": precision_score(y_test_level, preds_level, average='weighted', zero_division=0),
+                    "Recall": recall_score(y_test_level, preds_level, average='weighted', zero_division=0),
+                    "F1-Score": f1_score(y_test_level, preds_level, average='weighted', zero_division=0)
+                }
+                st.write("Risk Level Classification Metrics")
+                st.dataframe(pd.DataFrame(perf_level, index=[name]).T, use_container_width=True)
+            except Exception as e:
+                st.error(f"Failed to evaluate Risk Level for {name}: {e}")
 
-    # Model Metric Comparison (All Models)
-    st.subheader("Model Metric Comparison (Risk Type)")
+            # K-Fold Cross Validation (Risk Type)
+            try:
+                st.subheader("K-Fold Cross Validation Accuracy (Risk Type)")
+                kf = KFold(n_splits=5, shuffle=True, random_state=42)
+                cv_scores = cross_val_score(clone(mod), X, y_type, cv=kf, scoring='accuracy')
+                st.bar_chart(cv_scores)
+                st.info("The bar chart displays cross-validation fold accuracies for this model.")
+            except Exception as e:
+                st.error(f"Cross-validation failed for {name}: {e}")
+
+            st.markdown("---")
+            st.info(
+                "Interpretation hints: Compare Accuracy and F1-Score to see whether the model balances overall correctness with per-class performance. "
+                "Precision/Recall trade-offs indicate which types/levels are favored or missed."
+            )
+
+    # Model Metric Comparison (All Models) - summary across models for Risk Type
+    st.subheader("Model Metric Comparison (Risk Type) — Summary")
     metrics_dict = {}
     for name, mod in model_objs.items():
-        mod.fit(X_train, y_train_type)
-        pred = mod.predict(X_test)
-        metrics_dict[name] = [
-            accuracy_score(y_test_type, pred),
-            precision_score(y_test_type, pred, average='weighted', zero_division=0),
-            recall_score(y_test_type, pred, average='weighted', zero_division=0),
-            f1_score(y_test_type, pred, average='weighted', zero_division=0)
-        ]
-    perf_df = pd.DataFrame(metrics_dict, index=["Accuracy","Precision","Recall","F1-Score"])
-    fig, ax = plt.subplots()
+        try:
+            mod_tmp = clone(mod)
+            mod_tmp.fit(X_train, y_train_type)
+            pred = mod_tmp.predict(X_test)
+            metrics_dict[name] = [
+                accuracy_score(y_test_type, pred),
+                precision_score(y_test_type, pred, average='weighted', zero_division=0),
+                recall_score(y_test_type, pred, average='weighted', zero_division=0),
+                f1_score(y_test_type, pred, average='weighted', zero_division=0)
+            ]
+        except Exception as e:
+            metrics_dict[name] = [np.nan, np.nan, np.nan, np.nan]
+            st.warning(f"Could not compute metrics for {name}: {e}")
+
+    perf_df = pd.DataFrame(metrics_dict, index=["Accuracy", "Precision", "Recall", "F1-Score"])
+    fig, ax = plt.subplots(figsize=(10, 5))
     perf_df.plot(kind='bar', ax=ax)
+    ax.set_title("Model Comparison on Test Set (Risk Type)")
     st.pyplot(fig)
-    st.info("""
-    **Interpretation:**  
-    This bar chart visually compares model performance across key metrics for Risk Type classification. 
-    Use it to select the best performing model for further analysis or deployment.
-    """)
+    st.info("This bar chart visually compares model performance across key metrics for Risk Type classification.")
 
     # -----------------------------
     # Visualizations BELOW modeling
