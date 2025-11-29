@@ -30,25 +30,32 @@ if uploaded_file:
     st.dataframe(df.head())
 
     # -----------------------------
-    # Outlier Handling
+    # Outlier Handling (FIXED)
     # -----------------------------
     num_cols = ["MP_Count_per_L", "Risk_Score", "Microplastic_Size_mm_midpoint", "Density_midpoint"]
     for col in num_cols:
         if col in df.columns:
-            Q1 = df[col].quantile(0.25)
-            Q3 = df[col].quantile(0.75)
-            IQR = Q3 - Q1
-            lower = Q1 - 1.5 * IQR
-            upper = Q3 + 1.5 * IQR
-            df[col] = np.clip(df[col], lower, upper)
+            # Convert to numeric, coerce bad values to NaN
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            # Only clip if not all NaN
+            if df[col].notna().sum() > 0:
+                Q1 = df[col].quantile(0.25)
+                Q3 = df[col].quantile(0.75)
+                IQR = Q3 - Q1
+                lower = Q1 - 1.5 * IQR
+                upper = Q3 + 1.5 * IQR
+                df[col] = np.clip(df[col], lower, upper)
+            # If all NaN, don't clip
 
     # -----------------------------
-    # Skewness Transformation
+    # Skewness Transformation (FIXED)
     # -----------------------------
     for col in num_cols:
-        if col in df.columns and df[col].skew() > 1:
-            df[col] = np.log1p(df[col])
-
+        if col in df.columns and df[col].notna().sum() > 0:
+            # Use skew only on non-NaN values; skip if all NaN
+            if df[col].skew() > 1:
+                df[col] = np.log1p(df[col])
+    
     # -----------------------------
     # Encoding Categorical Variables
     # -----------------------------
@@ -64,8 +71,9 @@ if uploaded_file:
     # -----------------------------
     scaler = StandardScaler()
     for col in num_cols:
-        if col in df.columns:
+        if col in df.columns and df[col].notna().sum() > 0:
             df[col] = scaler.fit_transform(df[[col]])
+        # If all NaN, skip scaling
 
     st.subheader("Preprocessed Dataset")
     st.dataframe(df.head())
@@ -74,15 +82,15 @@ if uploaded_file:
     # Risk Score Distribution
     # -----------------------------
     st.subheader("Risk Score Distribution")
-    if 'Risk_Score' in df.columns:
+    if 'Risk_Score' in df.columns and df['Risk_Score'].notna().sum() > 0:
         fig, ax = plt.subplots()
-        sns.histplot(df['Risk_Score'], kde=True, ax=ax)
+        sns.histplot(df['Risk_Score'].dropna(), kde=True, ax=ax)
         st.pyplot(fig)
 
     # -----------------------------
     # Risk Score vs MP Count
     # -----------------------------
-    if 'Risk_Score' in df.columns and 'MP_Count_per_L' in df.columns:
+    if 'Risk_Score' in df.columns and 'MP_Count_per_L' in df.columns and df['Risk_Score'].notna().sum() > 0 and df['MP_Count_per_L'].notna().sum() > 0:
         st.subheader("Risk Score vs MP_Count_per_L")
         fig, ax = plt.subplots()
         ax.scatter(df['Risk_Score'], df['MP_Count_per_L'])
@@ -93,7 +101,7 @@ if uploaded_file:
     # -----------------------------
     # Risk Score by Risk Level
     # -----------------------------
-    if 'Risk_Level' in df.columns:
+    if 'Risk_Level' in df.columns and 'Risk_Score' in df.columns and df['Risk_Score'].notna().sum() > 0:
         st.subheader("Risk Score by Risk Level")
         fig, ax = plt.subplots()
         sns.boxplot(x=df['Risk_Level'], y=df['Risk_Score'], ax=ax)
@@ -106,6 +114,11 @@ if uploaded_file:
         X = df.drop(columns=["Risk_Type", "Risk_Level"])
         y_type = df['Risk_Type']
         y_level = df['Risk_Level']
+
+        # Remove rows with NaNs for modeling
+        X = X.fillna(0)
+        y_type = y_type.fillna(0)
+        y_level = y_level.fillna(0)
 
         X_train, X_test, y_train_type, y_test_type = train_test_split(X, y_type, test_size=0.2, random_state=42)
         _, _, y_train_level, y_test_level = train_test_split(X, y_level, test_size=0.2, random_state=42)
@@ -126,9 +139,9 @@ if uploaded_file:
             preds_type = model.predict(X_test)
             results_type[name] = [
                 accuracy_score(y_test_type, preds_type),
-                precision_score(y_test_type, preds_type, average='weighted'),
-                recall_score(y_test_type, preds_type, average='weighted'),
-                f1_score(y_test_type, preds_type, average='weighted')
+                precision_score(y_test_type, preds_type, average='weighted', zero_division=0),
+                recall_score(y_test_type, preds_type, average='weighted', zero_division=0),
+                f1_score(y_test_type, preds_type, average='weighted', zero_division=0)
             ]
 
             # Risk Level
@@ -136,9 +149,9 @@ if uploaded_file:
             preds_level = model.predict(X_test)
             results_level[name] = [
                 accuracy_score(y_test_level, preds_level),
-                precision_score(y_test_level, preds_level, average='weighted'),
-                recall_score(y_test_level, preds_level, average='weighted'),
-                f1_score(y_test_level, preds_level, average='weighted')
+                precision_score(y_test_level, preds_level, average='weighted', zero_division=0),
+                recall_score(y_test_level, preds_level, average='weighted', zero_division=0),
+                f1_score(y_test_level, preds_level, average='weighted', zero_division=0)
             ]
 
         st.write("Risk_Type Performance:")
