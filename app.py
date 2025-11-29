@@ -19,7 +19,7 @@ uploaded_file = st.file_uploader("Upload CSV or Excel Dataset", type=["csv", "xl
 if uploaded_file:
     try:
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, encoding='latin1', errors='ignore')
+            df = pd.read_csv(uploaded_file, encoding='latin1')
         else:
             df = pd.read_excel(uploaded_file)
     except Exception as e:
